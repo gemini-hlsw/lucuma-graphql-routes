@@ -1,4 +1,4 @@
-# lucuma-odb-api
+# lucuma-tmp-api
 
 ## Overview
 
