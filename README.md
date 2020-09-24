@@ -69,9 +69,11 @@ query Program {
           }
           epoch
           properVelocity {
-            ra
-            dec
+            ra { milliarcsecondsPerYear }
+            dec { milliarcsecondsPerYear }
           }
+          radialVelocity { metersPerSecond }
+          parallax { milliarcseconds }
         }
       }
     }
@@ -105,29 +107,29 @@ mutation AddSiderealTarget($input: CreateSiderealInput!) {
       __typename
       ... on Sidereal {
         coordinates {
-          ra { hms }
+          ra { hours }
           dec { dms }
         }
         epoch
         properVelocity {
-          ra
-          dec
+          ra { milliarcsecondsPerYear }
+          dec { milliarcsecondsPerYear }
         }
       }
     }
   }
-  
 }
+
 {
   "input": {
     "pids": ["p-2"],
     "name": "Zero",
-    "ra": "00:00:00.000",
-    "dec": "00:00:00.000",
+    "ra": {"hours": 1.23456 },
+    "dec": { "dms": "00:00:00.000"},
     "epoch": "J2000.000",
     "properVelocity": {
-      "ra": "1.00",
-      "dec": "2.00"
+      "ra":  { "milliarcsecondsPerYear": "1.00" },
+      "dec": { "microarcsecondsPerYear": "2.00" }
     }
   }
 }
@@ -148,18 +150,15 @@ mutation UpdateSiderealTarget($input2: EditSiderealInput!) {
           dec { dms }
         }
       }
-      
     }
   }
 }
-
-
 {
- "input2": {
+  "input2": {
     "id": "t-2",
     "name": "Zero",
-    "ra": "00:00:00.000",
-    "dec": "00:00:00.00"
+    "ra": { "hours": 0.0 },
+    "dec": {"dms": "00:00:00.00" }
   }
 }
 ```
