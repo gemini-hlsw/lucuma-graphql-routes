@@ -46,6 +46,10 @@ out/
 # Bloop/Metals
 .bloop/
 .metals/
+metals.sbt
 
 # Vim
 *.swp
+
+# VSCode
+.vscode/
