@@ -6,4 +6,5 @@ addSbtPlugin("io.spray"              % "sbt-revolver"        % "0.9.1")
 addSbtPlugin("com.typesafe.sbt"      % "sbt-site"            % "1.4.0")
 addSbtPlugin("com.typesafe.sbt"      % "sbt-ghpages"         % "0.6.3")
 addSbtPlugin("com.github.ghostdogpr" % "caliban-codegen-sbt" % "0.7.6")
+addSbtPlugin("com.typesafe.sbt"      % "sbt-native-packager" % "1.7.5")
 
