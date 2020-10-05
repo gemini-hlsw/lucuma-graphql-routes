@@ -52,7 +52,7 @@ lazy val `gem-odb-api` = project.in(file("."))
 
 lazy val core = project
   .in(file("modules/core"))
-  .enablePlugins(AutomateHeaderPlugin, CodegenPlugin)
+  .enablePlugins(AutomateHeaderPlugin)
   .settings(commonSettings)
   .settings(
     name := "lucuma-odb-api-core",
