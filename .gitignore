@@ -46,6 +46,7 @@ out/
 # Bloop/Metals
 .bloop/
 .metals/
+.bsp/
 metals.sbt
 
 # Vim
