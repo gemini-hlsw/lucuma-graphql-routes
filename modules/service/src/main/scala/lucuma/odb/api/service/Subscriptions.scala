@@ -75,8 +75,16 @@ object Subscriptions {
   // Converts raw graphQL subscription events into FromServer messages.
   private def fromServerPipe[F[_]](id: String): Pipe[F, Either[Throwable, Json], FromServer] =
     _.map {
-      case Left(err)  => Error(id, err.format)
-      case Right(obj) => Data(id, DataWrapper(obj))
+      case Left(err)           => Error(id, err.format)
+      case Right(json)         =>
+        Data(id,
+          DataWrapper(
+            // Sangria provides subscription results wrapped in "data".  If we
+            // add it directly to a DataWrapper then the encoding will have
+            // nested "data" fields.  This will strip the outer "data".
+            json.mapObject(o => o("data").fold(o)(_.asObject.fold(o)(identity)))
+          )
+        )
     }
 
   def apply[F[_]](
