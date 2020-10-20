@@ -16,8 +16,6 @@ import fs2.concurrent.NoneTerminatedQueue
 import org.log4s.getLogger
 import sangria.parser.QueryParser
 
-// TODO: will explore (etc.) expect keep alive messages?
-
 /**
  * A web-socket connection that receives messages from a client and processes
  * them.
@@ -55,7 +53,7 @@ object Connection {
       } yield ()
 
     override val init: (ConnectionState[F], F[Unit]) =
-      (this, reply(ConnectionAck))
+      (this, reply(ConnectionAck) *> reply(ConnectionKeepAlive))
 
     override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
       val parseResult =

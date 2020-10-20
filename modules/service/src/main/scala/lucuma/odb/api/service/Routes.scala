@@ -4,10 +4,11 @@
 package lucuma.odb.api.service
 
 import lucuma.odb.api.service.ErrorFormatter.syntax._
+import _root_.fs2.Stream
 import _root_.fs2.concurrent.Queue
 import cats.MonadError
 import cats.data.ValidatedNel
-import cats.effect.ConcurrentEffect
+import cats.effect.{ConcurrentEffect, Timer}
 import cats.implicits._
 import clue.model.StreamingMessage.FromServer.{Data, DataWrapper}
 import clue.model.StreamingMessage.{FromClient, FromServer}
@@ -23,15 +24,20 @@ import org.log4s.getLogger
 import sangria.ast.Document
 import sangria.parser.QueryParser
 
+import scala.concurrent.duration._
+
 
 object Routes {
 
   private[this] val logger = getLogger
 
+  val KeepAliveDuration: FiniteDuration =
+    5.seconds
+
   def forService[F[_]](
     service: OdbService[F]
   )(
-    implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable]
+    implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
 
     def info(m: String): F[Unit] =
@@ -105,6 +111,11 @@ object Routes {
           m
       }
 
+    val keepAliveStream: Stream[F, FromServer] =
+      Stream
+        .constant[F, FromServer](FromServer.ConnectionKeepAlive)
+        .metered(KeepAliveDuration)
+
     val webSocketConnection: F[Response[F]] =
       for {
         replyQueue <- Queue.noneTerminated[F, FromServer]
@@ -114,6 +125,7 @@ object Routes {
           // Replies to client
           replyQueue
             .dequeue
+            .mergeHaltL(keepAliveStream)
             .map(m => stripDataWrapper(m).asJson.spaces2)
             .evalTap(m => info(s"Sending to client $m"))
             .map(Text(_)),
