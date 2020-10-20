@@ -4,8 +4,6 @@
 package lucuma.odb.api.service
 
 import lucuma.odb.api.service.ErrorFormatter.syntax._
-import _root_.fs2.Stream
-import _root_.fs2.concurrent.Queue
 import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
@@ -13,6 +11,8 @@ import cats.implicits._
 import clue.model.StreamingMessage.FromServer.{Data, DataWrapper}
 import clue.model.StreamingMessage.{FromClient, FromServer}
 import clue.model.json._
+import fs2.Stream
+import fs2.concurrent.Queue
 import io.circe._
 import io.circe.syntax._
 import org.http4s.circe._
