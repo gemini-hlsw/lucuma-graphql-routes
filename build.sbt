@@ -15,8 +15,8 @@ val lucumaCoreVersion           = "0.5.3"
 val monocleVersion              = "2.1.0"
 val refinedVersion              = "0.9.17"
 val sangriaVersion              = "2.0.1"
-val sangriaCirceVersion         = "1.3.0"
-val singletonOpsVersion         = "0.5.1"
+val sangriaCirceVersion         = "1.3.1"
+val singletonOpsVersion         = "0.5.2"
 
 
 inThisBuild(
