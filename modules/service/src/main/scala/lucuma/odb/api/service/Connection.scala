@@ -28,6 +28,8 @@ sealed trait Connection[F[_]] {
 
 object Connection {
 
+  import syntax.json._
+
   private[this] val logger = getLogger
 
   sealed trait ConnectionState[F[_]] {
@@ -75,7 +77,7 @@ object Connection {
       (this, subscriptions.remove(id))
 
     override val terminate: (ConnectionState[F], F[Unit]) =
-      (new Terminated, subscriptions.terminate >> replyQueue.enqueue1(None))
+      (new Terminated, subscriptions.terminate *> replyQueue.enqueue1(None))
 
     def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
@@ -88,7 +90,7 @@ object Connection {
         r <- odbService.query(request)
         _ <- r.fold(
                err  => reply(Error(id, err.format)),
-               json => reply(Data(id, DataWrapper(json))) >> reply(Complete(id))
+               json => reply(json.toDataMessage(id)) *> reply(Complete(id))
              )
       } yield ()
 

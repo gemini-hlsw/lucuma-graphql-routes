@@ -45,6 +45,8 @@ trait Subscriptions[F[_]] {
 
 object Subscriptions {
 
+  import syntax.json._
+
   private[this] val logger = getLogger
 
   /**
@@ -76,7 +78,7 @@ object Subscriptions {
   private def fromServerPipe[F[_]](id: String): Pipe[F, Either[Throwable, Json], FromServer] =
     _.map {
       case Left(err)   => Error(id, err.format)
-      case Right(json) => Data(id, DataWrapper(json))
+      case Right(json) => json.toDataMessage(id)
     }
 
   def apply[F[_]](

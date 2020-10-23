@@ -8,7 +8,6 @@ import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
 import cats.implicits._
-import clue.model.StreamingMessage.FromServer.{Data, DataWrapper}
 import clue.model.StreamingMessage.{FromClient, FromServer}
 import clue.model.json._
 import fs2.Stream
@@ -97,20 +96,6 @@ object Routes {
         resp   <- toResponse(result)
       } yield resp
 
-    def stripDataWrapper(m: FromServer): FromServer =
-      m match {
-        case Data(id, DataWrapper(json)) =>
-          Data(id, DataWrapper(
-            // Sangria provides JSON results in an object with a "data" field.
-            // If we add it directly to a DataWrapper then the encoding will
-            // have nested "data" fields.  This will strip the inner "data".
-            json.mapObject(o => o("data").fold(o)(_.asObject.fold(o)(identity)))
-          ))
-
-        case _                           =>
-          m
-      }
-
     val keepAliveStream: Stream[F, FromServer] =
       Stream
         .constant[F, FromServer](FromServer.ConnectionKeepAlive)
@@ -126,7 +111,7 @@ object Routes {
           replyQueue
             .dequeue
             .mergeHaltL(keepAliveStream)
-            .map(m => stripDataWrapper(m).asJson.spaces2)
+            .map(_.asJson.spaces2)
             .evalTap(m => info(s"Sending to client $m"))
             .map(Text(_)),
 
