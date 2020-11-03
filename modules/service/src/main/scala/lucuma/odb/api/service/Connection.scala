@@ -50,8 +50,8 @@ object Connection {
 
     def reply(m: FromServer): F[Unit] =
       for {
-        _ <- info(s"Connection.reply $m")
-        _ <- replyQueue.enqueue1(Some(m))
+        b <- replyQueue.offer1(Some(m))
+        _ <- info(s"Connection.reply message $m ${if (b) "enqueued" else "DROPPED!"}")
       } yield ()
 
     override val init: (ConnectionState[F], F[Unit]) =

@@ -92,8 +92,8 @@ object Subscriptions {
 
         def send(m: FromServer): F[Unit] =
           for {
-            _ <- info(s"Subscriptions enqueueing $m")
-            _ <- replyQueue.enqueue1(Some(m))
+            b <- replyQueue.offer1(Some(m))
+            _ <- info(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
           } yield ()
 
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
