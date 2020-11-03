@@ -90,7 +90,7 @@ object Connection {
         r <- odbService.query(request)
         _ <- r.fold(
                err  => reply(Error(id, err.format)),
-               json => reply(json.toDataMessage(id)) *> reply(Complete(id))
+               json => reply(json.toStreamingMessage(id)) *> reply(Complete(id))
              )
       } yield ()
 
