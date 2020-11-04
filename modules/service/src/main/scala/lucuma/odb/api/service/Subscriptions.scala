@@ -78,7 +78,7 @@ object Subscriptions {
   private def fromServerPipe[F[_]](id: String): Pipe[F, Either[Throwable, Json], FromServer] =
     _.map {
       case Left(err)   => Error(id, err.format)
-      case Right(json) => json.toDataMessage(id)
+      case Right(json) => json.toStreamingMessage(id)
     }
 
   def apply[F[_]](

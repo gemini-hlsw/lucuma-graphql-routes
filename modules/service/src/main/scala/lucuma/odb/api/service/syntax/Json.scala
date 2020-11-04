@@ -3,7 +3,8 @@
 
 package lucuma.odb.api.service.syntax
 
-import clue.model.StreamingMessage.FromServer.{Data, DataWrapper}
+import clue.model.StreamingMessage.FromServer
+import clue.model.StreamingMessage.FromServer.{Data, DataWrapper, Error}
 import io.circe.Json
 
 final class JsonOps(val self: Json) extends AnyVal {
@@ -11,11 +12,26 @@ final class JsonOps(val self: Json) extends AnyVal {
   def objectField(n: String): Option[Json] =
     self.hcursor.downField(n).focus
 
-  def toDataMessage(id: String): Data =
-    Data(
+  def errorsField: Option[Json] =
+    objectField("errors").filterNot(_.isNull)
+
+  def dataField: Option[Json] =
+    objectField("data").filterNot(_.isNull)
+
+  private def unexpectedErrorMessage(id: String): FromServer =
+    Error(
       id,
-      DataWrapper(objectField("data").getOrElse(Json.Null), objectField("errors"))
+      Json.arr(
+        Json.obj(
+          "message" -> Json.fromString(s"Internal server error, expected error or data but got:\n${self.spaces2}")
+        )
+      )
     )
+
+  def toStreamingMessage(id: String): FromServer =
+    dataField.fold(errorsField.fold(unexpectedErrorMessage(id))(Error(id, _))) { d =>
+      Data(id, DataWrapper(d, errorsField))
+    }
 
 }
 
