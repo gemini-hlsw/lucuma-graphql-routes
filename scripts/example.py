@@ -1,10 +1,10 @@
 import json, requests
 
 #
-# Loads additional targets into program "p-2".  Update "url" to point to the 
+# Loads additional targets into program "p-2".  Update "url" to point to the
 # appropriate database.
 #
- 
+
 url = "http://localhost:8080/odb"
 #url = "https://lucuma-odb-staging.herokuapp.com/odb"
 pid = "p-2"
@@ -144,16 +144,6 @@ mutation CreateSiderealTarget($createSidereal: CreateSiderealInput!) {
 }
 """
 
-
-# A simple function to use requests.post to make the API call. Note the json= section.
-def run_query(query, variables):
-    response = requests.post(url, json={'query': query, 'operationName': "CreateSiderealTarget", 'variables': variables})
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception("Query failed with {}. {}".format(response.status_code, query))
- 
-
 # Execute the query for each target
 for t in targets:
   # Add program id
@@ -164,8 +154,12 @@ for t in targets:
     "createSidereal": t
   }
 
-  result = run_query(query, variables)
+  result = requests.post(url, json={'query': query, 'operationName': "CreateSiderealTarget", 'variables': variables})
+  code   = result.status_code
 
-  fmt = json.dumps(result["data"]["createSiderealTarget"], indent=2)
- 
-  print(fmt)
+  if code == 200:
+    print(json.dumps(result.json()["data"]["createSiderealTarget"], indent=2))
+  elif code >= 400 and code < 500:
+    print(json.dumps(result.json()["errors"], indent=2))
+
+  result.raise_for_status()
