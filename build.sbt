@@ -85,6 +85,7 @@ lazy val core = project
       "eu.timepit"                 %% "refined"                % refinedVersion,
       "eu.timepit"                 %% "refined-cats"           % refinedVersion,
 
+      "edu.gemini"                 %% "lucuma-core-testkit"    % lucumaCoreVersion      % Test,
       "org.scalameta"              %% "munit"                  % munitVersion           % Test,
       "org.typelevel"              %% "discipline-munit"       % disciplineMunitVersion % Test
     ),
