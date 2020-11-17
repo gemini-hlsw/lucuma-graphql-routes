@@ -5,8 +5,8 @@ import json, requests
 # appropriate database.
 #
 
-#url = "http://localhost:8080/odb"
-url = "https://lucuma-odb-staging.herokuapp.com/odb"
+url = "http://localhost:8080/odb"
+#url = "https://lucuma-odb-staging.herokuapp.com/odb"
 pid = "p-2"
 
 targets = [
