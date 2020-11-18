@@ -18,6 +18,9 @@ val sangriaVersion              = "2.0.1"
 val sangriaCirceVersion         = "1.3.1"
 val singletonOpsVersion         = "0.5.2"
 
+val munitVersion                = "0.7.18"
+val disciplineMunitVersion      = "1.0.2"
+
 
 inThisBuild(
   Seq(
@@ -80,8 +83,13 @@ lazy val core = project
       "ch.qos.logback"             %  "logback-classic"        % logbackVersion,
       "eu.timepit"                 %% "singleton-ops"          % singletonOpsVersion,
       "eu.timepit"                 %% "refined"                % refinedVersion,
-      "eu.timepit"                 %% "refined-cats"           % refinedVersion
-    )
+      "eu.timepit"                 %% "refined-cats"           % refinedVersion,
+
+      "edu.gemini"                 %% "lucuma-core-testkit"    % lucumaCoreVersion      % Test,
+      "org.scalameta"              %% "munit"                  % munitVersion           % Test,
+      "org.typelevel"              %% "discipline-munit"       % disciplineMunitVersion % Test
+    ),
+    testFrameworks += new TestFramework("munit.Framework")
   )
 
 lazy val service = project
