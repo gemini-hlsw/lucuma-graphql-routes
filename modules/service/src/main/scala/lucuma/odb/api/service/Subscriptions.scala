@@ -12,6 +12,7 @@ import cats.implicits._
 import fs2.{Pipe, Stream}
 import fs2.concurrent.{NoneTerminatedQueue, SignallingRef}
 import io.circe.Json
+import lucuma.core.model.User
 import org.log4s.getLogger
 
 
@@ -82,6 +83,7 @@ object Subscriptions {
     }
 
   def apply[F[_]](
+    user:       Option[User],
     replyQueue: NoneTerminatedQueue[F, FromServer]
   )(implicit F: ConcurrentEffect[F]): F[Subscriptions[F]] =
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
@@ -93,7 +95,7 @@ object Subscriptions {
         def send(m: FromServer): F[Unit] =
           for {
             b <- replyQueue.offer1(Some(m))
-            _ <- info(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+            _ <- info(s"Subscriptions send (user=$user) $m ${if (b) "enqueued" else "DROPPED!"}")
           } yield ()
 
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =

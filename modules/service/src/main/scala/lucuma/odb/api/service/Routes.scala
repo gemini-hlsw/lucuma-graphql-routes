@@ -4,6 +4,9 @@
 package lucuma.odb.api.service
 
 import lucuma.odb.api.service.ErrorFormatter.syntax._
+import lucuma.core.model.User
+import lucuma.sso.client.SsoClient
+
 import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
@@ -34,10 +37,13 @@ object Routes {
     5.seconds
 
   def forService[F[_]](
-    service: OdbService[F]
+    service:    OdbService[F],
+    userClient: SsoClient[F, User]
   )(
     implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
+
+    println(userClient)
 
     def info(m: String): F[Unit] =
       F.delay(logger.info(m))
@@ -101,10 +107,10 @@ object Routes {
         .constant[F, FromServer](FromServer.ConnectionKeepAlive)
         .metered(KeepAliveDuration)
 
-    val webSocketConnection: F[Response[F]] =
+    def webSocketConnection(user: Option[User]): F[Response[F]] =
       for {
         replyQueue <- Queue.noneTerminated[F, FromServer]
-        connection <- Connection(service, replyQueue)
+        connection <- Connection(user, service, replyQueue)
         response   <- WebSocketBuilder[F].build(
 
           // Replies to client
@@ -112,11 +118,11 @@ object Routes {
             .dequeue
             .mergeHaltL(keepAliveStream)
             .map(_.asJson.spaces2)
-            .evalTap(m => info(s"Sending to client $m"))
+            .evalTap(m => info(s"Sending to client (user=$user) $m"))
             .map(Text(_)),
 
           // Input from client
-          _.evalTap(f => info(s"Received message from client: $f"))
+          _.evalTap(f => info(s"Received message from client (user=$user): $f"))
             .evalMap {
               case Text(s, _) =>
                 scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
@@ -139,24 +145,27 @@ object Routes {
     HttpRoutes.of[F] {
 
       // GraphQL query is embedded in the URI query string when queried via GET
-      case GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+      case req @ GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
-          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars")
+          u <- userClient.find(req)
+          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars, user=$u")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / "odb" =>
         for {
-          _ <- info(s"POST one off: request=$req")
+          u <- userClient.find(req)
+          _ <- info(s"POST one off: request=$req, user=$u")
           r <- oneOffPost(req)
         } yield r
 
       // WebSocket connection request.
       case req @ GET -> Root / "ws" =>
         for {
-          _ <- info(s"GET web socket: $req")
-          r <- webSocketConnection
+          u <- userClient.find(req)
+          _ <- info(s"GET web socket: $req, user=$u")
+          r <- webSocketConnection(u)
         } yield r
 
     }

@@ -13,6 +13,7 @@ import cats.implicits._
 import cats.effect.ConcurrentEffect
 import clue.model.GraphQLRequest
 import fs2.concurrent.NoneTerminatedQueue
+import lucuma.core.model.User
 import org.log4s.getLogger
 import sangria.parser.QueryParser
 
@@ -40,6 +41,7 @@ object Connection {
   }
 
   final class Connected[F[_]](
+    user:          Option[User],
     odbService:    OdbService[F],
     replyQueue:    NoneTerminatedQueue[F, FromServer],
     subscriptions: Subscriptions[F]
@@ -51,7 +53,7 @@ object Connection {
     def reply(m: FromServer): F[Unit] =
       for {
         b <- replyQueue.offer1(Some(m))
-        _ <- info(s"Connection.reply message $m ${if (b) "enqueued" else "DROPPED!"}")
+        _ <- info(s"Connection.reply (user=$user) message $m ${if (b) "enqueued" else "DROPPED!"}")
       } yield ()
 
     override val init: (ConnectionState[F], F[Unit]) =
@@ -77,7 +79,7 @@ object Connection {
       (this, subscriptions.remove(id))
 
     override val terminate: (ConnectionState[F], F[Unit]) =
-      (new Terminated, subscriptions.terminate *> replyQueue.enqueue1(None))
+      (new Terminated(user), subscriptions.terminate *> replyQueue.enqueue1(None))
 
     def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
@@ -96,10 +98,10 @@ object Connection {
 
   }
 
-  final class Terminated[F[_]](implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
+  final class Terminated[F[_]](user: Option[User])(implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
 
     private val raiseError: (ConnectionState[F], F[Unit]) =
-      (this, M.raiseError(new RuntimeException("Connection was terminated")))
+      (this, M.raiseError(new RuntimeException(s"Connection (user=$user) was terminated")))
 
     override val init: (ConnectionState[F], F[Unit]) =
       raiseError
@@ -115,6 +117,7 @@ object Connection {
   }
 
   def apply[F[_]](
+    user:       Option[User],
     odbService: OdbService[F],
     replyQueue: NoneTerminatedQueue[F, FromServer]
   )(
@@ -122,8 +125,8 @@ object Connection {
   ): F[Connection[F]] =
 
     for {
-      s <- Subscriptions(replyQueue)
-      r <- Ref.of(new Connected[F](odbService, replyQueue, s): ConnectionState[F])
+      s <- Subscriptions(user, replyQueue)
+      r <- Ref.of(new Connected[F](user, odbService, replyQueue, s): ConnectionState[F])
     } yield
       new Connection[F] {
 
