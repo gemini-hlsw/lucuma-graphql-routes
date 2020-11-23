@@ -10,7 +10,7 @@ import cats.effect.{ConcurrentEffect, Fiber}
 import cats.effect.concurrent.Ref
 import cats.implicits._
 import fs2.{Pipe, Stream}
-import fs2.concurrent.{NoneTerminatedQueue, SignallingRef}
+import fs2.concurrent.SignallingRef
 import io.circe.Json
 import lucuma.core.model.User
 import org.log4s.getLogger
@@ -83,23 +83,18 @@ object Subscriptions {
     }
 
   def apply[F[_]](
-    user:       Option[User],
-    replyQueue: NoneTerminatedQueue[F, FromServer]
+    user: Option[User],
+    send: Option[FromServer] => F[Unit]
   )(implicit F: ConcurrentEffect[F]): F[Subscriptions[F]] =
+
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
 
         def info(m: String): F[Unit] =
-          F.delay(logger.info(m))
-
-        def send(m: FromServer): F[Unit] =
-          for {
-            b <- replyQueue.offer1(Some(m))
-            _ <- info(s"Subscriptions send (user=$user) $m ${if (b) "enqueued" else "DROPPED!"}")
-          } yield ()
+          F.delay(logger.info(s"user=$user, message=$m"))
 
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
-          events => fromServerPipe(id)(events).evalMap(send)
+          events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))
 
         override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
           for {
@@ -113,15 +108,13 @@ object Subscriptions {
         override def remove(id: String): F[Unit] =
           for {
             m <- subscriptions.getAndUpdate(_.removed(id))
-            _ <- m.get(id).fold(().pure[F])(_.stop)
-            _ <- send(Complete(id))  // TODO: is this expected?
+            _ <- m.get(id).fold(().pure[F])(s => s.stop *> send(Some(Complete(s.id))))
           } yield ()
 
         override def terminate: F[Unit] =
           for {
             m <- subscriptions.getAndSet(Map.empty[String, Subscription[F]])
-            _ <- m.values.toList.traverse_(_.stop)
-            _ <- m.keys.toList.traverse_(id => send(Complete(id))) // TODO: yes?
+            _ <- m.values.toList.traverse_(s => s.stop *> send(Some(Complete(s.id))))
           } yield ()
 
       }

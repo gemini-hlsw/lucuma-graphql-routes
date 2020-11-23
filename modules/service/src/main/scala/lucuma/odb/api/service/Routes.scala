@@ -43,8 +43,6 @@ object Routes {
     implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
 
-    println(userClient)
-
     def info(m: String): F[Unit] =
       F.delay(logger.info(m))
 
@@ -107,10 +105,10 @@ object Routes {
         .constant[F, FromServer](FromServer.ConnectionKeepAlive)
         .metered(KeepAliveDuration)
 
-    def webSocketConnection(user: Option[User]): F[Response[F]] =
+    val webSocketConnection: F[Response[F]] =
       for {
         replyQueue <- Queue.noneTerminated[F, FromServer]
-        connection <- Connection(user, service, replyQueue)
+        connection <- Connection(service, userClient, replyQueue)
         response   <- WebSocketBuilder[F].build(
 
           // Replies to client
@@ -118,24 +116,24 @@ object Routes {
             .dequeue
             .mergeHaltL(keepAliveStream)
             .map(_.asJson.spaces2)
-            .evalTap(m => info(s"Sending to client (user=$user) $m"))
+            .evalTap(m => connection.user.flatMap(u => info(s"Sending to client (user=$u) $m")))
             .map(Text(_)),
 
           // Input from client
-          _.evalTap(f => info(s"Received message from client (user=$user): $f"))
-            .evalMap {
-              case Text(s, _) =>
-                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                  e => M.raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
-                  m => connection.receive(m)
-                )
+          _.evalTap(f => connection.user.flatMap(u => info(s"Received message from client (user=$u): $f")))
+           .evalMap {
+             case Text(s, _) =>
+               scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
+                 e => M.raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+                 m => connection.receive(m)
+               )
 
-              case Close(_)   =>
-                connection.receive(FromClient.ConnectionTerminate)
+             case Close(_)   =>
+               connection.receive(FromClient.ConnectionTerminate)
 
-              case f          =>
-                M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
-            },
+             case f          =>
+               M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+           },
 
           Headers.of(Header("Sec-WebSocket-Protocol", "graphql-ws"))
         )
@@ -163,9 +161,8 @@ object Routes {
       // WebSocket connection request.
       case req @ GET -> Root / "ws" =>
         for {
-          u <- userClient.find(req)
-          _ <- info(s"GET web socket: $req, user=$u")
-          r <- webSocketConnection(u)
+          _ <- info(s"GET web socket: $req")
+          r <- webSocketConnection
         } yield r
 
     }
