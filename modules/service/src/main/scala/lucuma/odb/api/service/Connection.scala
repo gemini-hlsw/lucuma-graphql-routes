@@ -10,7 +10,9 @@ import lucuma.sso.client.SsoClient
 import cats.{Applicative, MonadError}
 import cats.effect.concurrent.Ref
 import cats.effect.ConcurrentEffect
-import cats.implicits._
+import cats.syntax.apply._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
 
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage._
