@@ -239,9 +239,10 @@ object Connection {
         def handle(f: ConnectionState[F] => (ConnectionState[F], F[Unit])): F[Unit] =
           stateRef.modify(f).flatten
 
-        // I think we need this out-of-band initialization:  need to create
-        // the subscriptions which is a F[Subscriptions[F]] so that has to
-        // be folded in with the update to the state
+        // I think we need this out-of-band initialization: need to do the user
+        // validation and create subscriptions (which produces an
+        // F[Subscriptions[F]]) so that has to be folded in with the update to
+        // the state
 
         def init(connectionProps: Map[String, String]): F[Unit] = {
 
