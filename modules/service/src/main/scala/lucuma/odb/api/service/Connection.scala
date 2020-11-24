@@ -6,20 +6,19 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
-
 import cats.{Applicative, MonadError}
 import cats.effect.concurrent.Ref
 import cats.effect.ConcurrentEffect
 import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-
+import cats.syntax.traverse._
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
-
 import fs2.concurrent.NoneTerminatedQueue
+import org.http4s.headers.Authorization
 import org.log4s.getLogger
 import sangria.parser.QueryParser
 
@@ -244,6 +243,17 @@ object Connection {
         // F[Subscriptions[F]]) so that has to be folded in with the update to
         // the state
 
+        def parseConnectionProps(
+          connectionProps: Map[String, String]
+        ): F[Option[Authorization]] =
+          connectionProps
+            .get("Authorization")
+            .map(Authorization.parse)
+            .flatTraverse {
+              case Left(err) => F.raiseError[Option[Authorization]](new RuntimeException(err.message, err.cause.orNull))
+              case Right(a)  => F.pure(Some(a))
+            }
+
         def init(connectionProps: Map[String, String]): F[Unit] = {
 
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
@@ -254,7 +264,8 @@ object Connection {
           }
 
           for {
-            u <- connectionProps.get("Authorization").fold(F.pure(Option.empty[User]))(a => userClient.find(a.stripPrefix("Bearer ")))
+            a <- parseConnectionProps(connectionProps)
+            u <- a.fold(F.pure(Option.empty[User]))(userClient.get)
             r  = reply(u)
             s <- Subscriptions(u, r)
             _ <- handle(_.init(u, r, s))
