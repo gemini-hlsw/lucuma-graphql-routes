@@ -28,8 +28,17 @@ import sangria.parser.QueryParser
  */
 sealed trait Connection[F[_]] {
 
+  /**
+   * User associated with the connection, if known.
+   */
   def user: F[Option[User]]
 
+  /**
+   * Accept a message from the client and process it, possibly changing state
+   * and sending messages in return.
+   *
+   * @param m client provided message
+   */
   def receive(m: FromClient): F[Unit]
 
 }
@@ -42,27 +51,52 @@ object Connection {
 
   /**
    * Connection is a state machine that (typically) transitions from states
-   * `PendingInit` to `Connected` to `Terminated` as it received messages from
+   * `PendingInit` to `Connected` to `Terminated` as it receives messages from
    * the client.
    */
   sealed trait ConnectionState[F[_]] {
+
+    /**
+     * The user associated with the connection, if known.  This should be
+     * provided in the `connection_init` payload under the `Authorization` key.
+     */
     def user: Option[User]
 
+    /**
+     * Initialize the connection with the given user, send reply function, and
+     * subscriptions.
+     *
+     * @param user user associated with the connection, if known
+     * @param send function to call in order to send a reply to the client
+     * @param subs subscriptions being managed for this connection
+     *
+     * @return state transition and action to execute
+     */
     def init(
       user: Option[User],
       send: Option[FromServer] => F[Unit],
       subs: Subscriptions[F]
     ): (ConnectionState[F], F[Unit])
 
-    def start(
-      id:  String,
-      req: GraphQLRequest
-    ): (ConnectionState[F], F[Unit])
+    /**
+     * Starts a Graph QL operation associated with a particular id.
+     *
+     * @return state transition and action to execute
+     */
+    def start(id:  String, req: GraphQLRequest): (ConnectionState[F], F[Unit])
 
-    def stop(
-      id: String
-    ): (ConnectionState[F], F[Unit])
+    /**
+     * Terminates a Graph QL subscription associated with a particular id
+     *
+     * @return state transition and action to execute
+     */
+    def stop(id: String): (ConnectionState[F], F[Unit])
 
+    /**
+     * Terminates the connection, closing all ongoing subscriptions as well.
+     *
+     * @return state transition and action to execute
+     */
     def terminate: (ConnectionState[F], F[Unit])
   }
 
@@ -96,15 +130,10 @@ object Connection {
        } yield ()
       )
 
-    override def start(
-      id: String,
-      req: GraphQLRequest
-    ): (ConnectionState[F], F[Unit]) =
+    override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
       doTerminate(s"start($id, $req)")
 
-    override def stop(
-      id: String
-    ): (ConnectionState[F], F[Unit]) =
+    override def stop(id: String): (ConnectionState[F], F[Unit]) =
       doTerminate(s"stop($id)")
 
     override def terminate: (ConnectionState[F], F[Unit]) =
@@ -137,10 +166,7 @@ object Connection {
         } yield ()
       }
 
-    override def start(
-      id: String,
-      raw: GraphQLRequest
-    ): (ConnectionState[F], F[Unit]) = {
+    override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
 
       val parseResult =
         QueryParser
@@ -155,29 +181,22 @@ object Connection {
       }
 
       (this, action)
+
     }
 
-    override def stop(
-      id: String
-    ): (ConnectionState[F], F[Unit]) =
+    override def stop(id: String): (ConnectionState[F], F[Unit]) =
       (this, subscriptions.remove(id))
 
     override val terminate: (ConnectionState[F], F[Unit]) =
       (new Terminated(user), subscriptions.terminate *> send(None))
 
-    def subscribe(
-      id:      String,
-      request: ParsedGraphQLRequest
-    ): F[Unit] =
+    def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
         s <- odbService.subscribe(request)
         _ <- subscriptions.add(id, s)
       } yield ()
 
-    def execute(
-      id:      String,
-      request: ParsedGraphQLRequest
-    ): F[Unit] =
+    def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
         r <- odbService.query(request)
         _ <- r.fold(
@@ -206,19 +225,15 @@ object Connection {
     ): (ConnectionState[F], F[Unit]) =
       raiseError
 
-    override def start(
-      id: String,
-      req: GraphQLRequest
-    ): (ConnectionState[F], F[Unit]) =
+    override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
       raiseError
 
-    override def stop(
-      id: String
-    ): (ConnectionState[F], F[Unit]) =
+    override def stop(id: String): (ConnectionState[F], F[Unit]) =
       raiseError
 
     override val terminate: (ConnectionState[F], F[Unit]) =
       (this, F.unit)
+
   }
 
 
@@ -238,11 +253,6 @@ object Connection {
         def handle(f: ConnectionState[F] => (ConnectionState[F], F[Unit])): F[Unit] =
           stateRef.modify(f).flatten
 
-        // I think we need this out-of-band initialization: need to do the user
-        // validation and create subscriptions (which produces an
-        // F[Subscriptions[F]]) so that has to be folded in with the update to
-        // the state
-
         def parseConnectionProps(
           connectionProps: Map[String, String]
         ): F[Option[Authorization]] =
@@ -254,8 +264,21 @@ object Connection {
               case Right(a)  => F.pure(Some(a))
             }
 
+        /**
+         * Connection initialization upon receipt of a `connection_init`
+         * message.  These actions are done outside of any particular state
+         * because they require executing effects in addition to the state
+         * transition itself.  Namely: user lookup based on authentication
+         * data in the `connection_init` payload and the creation of the
+         * Subscriptions object with its `Ref` for tracking subscriptions.
+         *
+         * @param connectionProps properties extracted from the `connection_init`
+         *                        payload
+         */
         def init(connectionProps: Map[String, String]): F[Unit] = {
 
+          // Creates the function used to send replies to the client.  It
+          // just offers a message to the reply queue and logs it.
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.offer1(m)
