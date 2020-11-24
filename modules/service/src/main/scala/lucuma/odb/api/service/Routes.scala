@@ -4,6 +4,9 @@
 package lucuma.odb.api.service
 
 import lucuma.odb.api.service.ErrorFormatter.syntax._
+import lucuma.core.model.User
+import lucuma.sso.client.SsoClient
+
 import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
@@ -34,7 +37,8 @@ object Routes {
     5.seconds
 
   def forService[F[_]](
-    service: OdbService[F]
+    service:    OdbService[F],
+    userClient: SsoClient[F, User]
   )(
     implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
@@ -104,7 +108,7 @@ object Routes {
     val webSocketConnection: F[Response[F]] =
       for {
         replyQueue <- Queue.noneTerminated[F, FromServer]
-        connection <- Connection(service, replyQueue)
+        connection <- Connection(service, userClient, replyQueue)
         response   <- WebSocketBuilder[F].build(
 
           // Replies to client
@@ -112,24 +116,24 @@ object Routes {
             .dequeue
             .mergeHaltL(keepAliveStream)
             .map(_.asJson.spaces2)
-            .evalTap(m => info(s"Sending to client $m"))
+            .evalTap(m => connection.user.flatMap(u => info(s"Sending to client (user=$u) $m")))
             .map(Text(_)),
 
           // Input from client
-          _.evalTap(f => info(s"Received message from client: $f"))
-            .evalMap {
-              case Text(s, _) =>
-                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                  e => M.raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
-                  m => connection.receive(m)
-                )
+          _.evalTap(f => connection.user.flatMap(u => info(s"Received message from client (user=$u): $f")))
+           .evalMap {
+             case Text(s, _) =>
+               scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
+                 e => M.raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+                 m => connection.receive(m)
+               )
 
-              case Close(_)   =>
-                connection.receive(FromClient.ConnectionTerminate)
+             case Close(_)   =>
+               connection.receive(FromClient.ConnectionTerminate)
 
-              case f          =>
-                M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
-            },
+             case f          =>
+               M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+           },
 
           Headers.of(Header("Sec-WebSocket-Protocol", "graphql-ws"))
         )
@@ -139,16 +143,18 @@ object Routes {
     HttpRoutes.of[F] {
 
       // GraphQL query is embedded in the URI query string when queried via GET
-      case GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+      case req @ GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
-          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars")
+          u <- userClient.find(req)
+          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars, user=$u")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / "odb" =>
         for {
-          _ <- info(s"POST one off: request=$req")
+          u <- userClient.find(req)
+          _ <- info(s"POST one off: request=$req, user=$u")
           r <- oneOffPost(req)
         } yield r
 
