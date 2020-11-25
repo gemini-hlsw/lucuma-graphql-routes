@@ -21,7 +21,7 @@ val sangriaCirceVersion         = "1.3.1"
 val singletonOpsVersion         = "0.5.2"
 
 val munitVersion                = "0.7.19"
-val disciplineMunitVersion      = "1.0.2"
+val disciplineMunitVersion      = "1.0.3"
 
 
 inThisBuild(
