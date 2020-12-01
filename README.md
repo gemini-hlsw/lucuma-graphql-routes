@@ -68,7 +68,7 @@ query Program {
             dec { dms }
           }
           epoch
-          properVelocity {
+          properMotion {
             ra { milliarcsecondsPerYear }
             dec { milliarcsecondsPerYear }
           }
@@ -111,7 +111,7 @@ mutation AddSiderealTarget($input: CreateSiderealInput!) {
           dec { dms }
         }
         epoch
-        properVelocity {
+        properMotion {
           ra { milliarcsecondsPerYear }
           dec { milliarcsecondsPerYear }
         }
@@ -127,7 +127,7 @@ mutation AddSiderealTarget($input: CreateSiderealInput!) {
     "ra": {"hours": 1.23456 },
     "dec": { "dms": "00:00:00.000"},
     "epoch": "J2000.000",
-    "properVelocity": {
+    "properMotion": {
       "ra":  { "milliarcsecondsPerYear": "1.00" },
       "dec": { "microarcsecondsPerYear": "2.00" }
     }
