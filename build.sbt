@@ -1,7 +1,7 @@
 val attoVersion                 = "0.8.0"
-val catsEffectVersion           = "2.2.0"
+val catsEffectVersion           = "2.3.0"
 val catsTestkitScalaTestVersion = "2.0.0"
-val catsVersion                 = "2.2.0"
+val catsVersion                 = "2.3.0"
 val circeOpticsVersion          = "0.13.0"
 val circeVersion                = "0.13.0"
 val cirisVersion                = "1.2.1"
@@ -9,10 +9,10 @@ val clueVersion                 = "0.4.0"
 val fs2Version                  = "2.4.6"
 val http4sVersion               = "0.21.13"
 val jawnVersion                 = "1.0.2"
-val kindProjectorVersion        = "0.11.1"
+val kindProjectorVersion        = "0.11.2"
 val logbackVersion              = "1.2.3"
 val log4catsVersion             = "1.1.1"
-val lucumaCoreVersion           = "0.7.1"
+val lucumaCoreVersion           = "0.7.2"
 val lucumaSsoVersion            = "0.0.8"
 val monocleVersion              = "2.1.0"
 val refinedVersion              = "0.9.18"
@@ -70,6 +70,7 @@ lazy val core = project
       "com.github.julien-truffaut" %% "monocle-state"             % monocleVersion,
       "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
+      "edu.gemini"                 %% "clue-model"                % clueVersion,
       "edu.gemini"                 %% "lucuma-core"               % lucumaCoreVersion,
       "edu.gemini"                 %% "lucuma-sso-backend-client" % lucumaSsoVersion,
       "org.tpolecat"               %% "atto-core"                 % attoVersion,
