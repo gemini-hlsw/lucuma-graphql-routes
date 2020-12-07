@@ -18,6 +18,7 @@ import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import fs2.concurrent.NoneTerminatedQueue
+import io.circe.Json
 import org.http4s.headers.Authorization
 import org.log4s.getLogger
 import sangria.parser.QueryParser
@@ -254,10 +255,11 @@ object Connection {
           stateRef.modify(f).flatten
 
         def parseConnectionProps(
-          connectionProps: Map[String, String]
+          connectionProps: Map[String, Json]
         ): F[Option[Authorization]] =
           connectionProps
             .get("Authorization")
+            .flatMap(_.asString)
             .map(Authorization.parse)
             .flatTraverse {
               case Left(err) => F.raiseError[Option[Authorization]](new RuntimeException(err.message, err.cause.orNull))
@@ -275,7 +277,7 @@ object Connection {
          * @param connectionProps properties extracted from the `connection_init`
          *                        payload
          */
-        def init(connectionProps: Map[String, String]): F[Unit] = {
+        def init(connectionProps: Map[String, Json]): F[Unit] = {
 
           // Creates the function used to send replies to the client.  It
           // just offers a message to the reply queue and logs it.
@@ -298,7 +300,7 @@ object Connection {
 
         override def receive(m: FromClient): F[Unit] =
           m match {
-            case ConnectionInit(m)   => init(m)
+            case ConnectionInit(m)   => init(m.toMap)
             case Start(id, request)  => handle(_.start(id, request))
             case Stop(id)            => handle(_.stop(id))
             case ConnectionTerminate => handle(_.terminate)
