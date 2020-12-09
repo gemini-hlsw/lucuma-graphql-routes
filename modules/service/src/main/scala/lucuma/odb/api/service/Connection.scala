@@ -300,7 +300,7 @@ object Connection {
 
         override def receive(m: FromClient): F[Unit] =
           m match {
-            case ConnectionInit(m)   => init(m.toMap)
+            case ConnectionInit(m)   => init(m)
             case Start(id, request)  => handle(_.start(id, request))
             case Stop(id)            => handle(_.stop(id))
             case ConnectionTerminate => handle(_.terminate)
