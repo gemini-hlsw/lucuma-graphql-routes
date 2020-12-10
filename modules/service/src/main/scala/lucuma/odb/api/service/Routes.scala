@@ -121,6 +121,9 @@ object Routes {
         }
 
       def logTextFrame(user: F[Option[User]], f: WebSocketFrame): F[Unit] = {
+
+        // The connection_init message payload has authorization information
+        // which should not be logged.
         val AuthRegEx    = """"Authorization":\s*"[^"]*"""".r.unanchored
         val RedactedAuth = """"Authorization": <REDACTED>"""
 
