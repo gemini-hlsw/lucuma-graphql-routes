@@ -4,6 +4,8 @@
 package lucuma.odb.api.service
 
 import lucuma.odb.api.service.ErrorFormatter.syntax._
+import lucuma.core.model.User
+
 import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromServer._
 import cats.effect.{ConcurrentEffect, Fiber}
@@ -11,9 +13,8 @@ import cats.effect.concurrent.Ref
 import cats.implicits._
 import fs2.{Pipe, Stream}
 import fs2.concurrent.SignallingRef
+import io.chrisdavenport.log4cats.Logger
 import io.circe.Json
-import lucuma.core.model.User
-import org.log4s.getLogger
 
 
 /**
@@ -48,8 +49,6 @@ object Subscriptions {
 
   import syntax.json._
 
-  private[this] val logger = getLogger
-
   /**
    * Tracks a single client subscription.
    *
@@ -82,7 +81,7 @@ object Subscriptions {
       case Right(json) => json.toStreamingMessage(id)
     }
 
-  def apply[F[_]](
+  def apply[F[_]: Logger](
     user: Option[User],
     send: Option[FromServer] => F[Unit]
   )(implicit F: ConcurrentEffect[F]): F[Subscriptions[F]] =
@@ -91,7 +90,7 @@ object Subscriptions {
       new Subscriptions[F]() {
 
         def info(m: String): F[Unit] =
-          F.delay(logger.info(s"user=$user, message=$m"))
+          Logger[F].info(s"(user=$user): message=$m")
 
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
           events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))

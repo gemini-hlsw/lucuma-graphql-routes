@@ -6,6 +6,7 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
+
 import cats.{Applicative, MonadError}
 import cats.effect.concurrent.Ref
 import cats.effect.ConcurrentEffect
@@ -19,8 +20,8 @@ import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import fs2.concurrent.NoneTerminatedQueue
 import io.circe.Json
+import io.chrisdavenport.log4cats.Logger
 import org.http4s.headers.Authorization
-import org.log4s.getLogger
 import sangria.parser.QueryParser
 
 /**
@@ -47,8 +48,6 @@ sealed trait Connection[F[_]] {
 object Connection {
 
   import syntax.json._
-
-  private[this] val logger = getLogger
 
   /**
    * Connection is a state machine that (typically) transitions from states
@@ -106,7 +105,7 @@ object Connection {
    * contains the user authorization header.  Once it receives it, we transition
    * to `Connected`.
    */
-  final class PendingInit[F[_]](
+  final class PendingInit[F[_]: Logger](
     odbService: OdbService[F],
     replyQueue: NoneTerminatedQueue[F, FromServer]
   )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
@@ -126,7 +125,7 @@ object Connection {
     private def doTerminate(m: String): (ConnectionState[F], F[Unit]) =
       (new Terminated(None),
        for {
-         _ <- F.delay(logger.info(s"Request received on un-initialized connection: $m. Terminating."))
+         _ <- Logger[F].info(s"Request received on un-initialized connection: $m. Terminating.")
          _ <- replyQueue.enqueue1(None)
        } yield ()
       )
@@ -145,7 +144,7 @@ object Connection {
    * Connected state. Post-initialization, we stay in the `Connected` state
    * until explicitly terminated by the client.
    */
-  final class Connected[F[_]](
+  final class Connected[F[_]: Logger](
     odbService:        OdbService[F],
     override val user: Option[User],
     send:              Option[FromServer] => F[Unit],
@@ -153,7 +152,7 @@ object Connection {
   )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
 
     def info(m: String): F[Unit] =
-      F.delay(logger.info(s"user=$user, message=$m"))
+      Logger[F].info(s"(user=$user): message=$m")
 
     override def init(
       u: Option[User],
@@ -217,7 +216,7 @@ object Connection {
   )(implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
 
     private val raiseError: (ConnectionState[F], F[Unit]) =
-      (this, M.raiseError(new RuntimeException(s"Connection (user=$user) was terminated")))
+      (this, M.raiseError(new RuntimeException(s"(user=$user): Connection was terminated")))
 
     override def init(
       u: Option[User],
@@ -238,7 +237,7 @@ object Connection {
   }
 
 
-  def apply[F[_]](
+  def apply[F[_]: Logger](
     odbService: OdbService[F],
     userClient: SsoClient[F, User],
     replyQueue: NoneTerminatedQueue[F, FromServer]
@@ -284,7 +283,7 @@ object Connection {
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.offer1(m)
-              _ <- F.delay(logger.info(s"Subscriptions send (user=$user) $m ${if (b) "enqueued" else "DROPPED!"}"))
+              _ <- Logger[F].info(s"(user=$user): Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
