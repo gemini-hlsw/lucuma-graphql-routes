@@ -6,7 +6,6 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
-
 import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
@@ -15,14 +14,15 @@ import clue.model.StreamingMessage.{FromClient, FromServer}
 import clue.model.json._
 import fs2.Stream
 import fs2.concurrent.Queue
+import io.chrisdavenport.log4cats.Logger
 import io.circe._
 import io.circe.syntax._
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.websocket.WebSocketBuilder
+import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.{Close, Text}
 import org.http4s.{Header, Headers, HttpRoutes, InvalidMessageBodyFailure, ParseFailure, QueryParamDecoder, Request, Response}
-import org.log4s.getLogger
 import sangria.ast.Document
 import sangria.parser.QueryParser
 
@@ -31,20 +31,15 @@ import scala.concurrent.duration._
 
 object Routes {
 
-  private[this] val logger = getLogger
-
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]](
+  def forService[F[_]: Logger](
     service:    OdbService[F],
     userClient: SsoClient[F, User]
   )(
     implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
-
-    def info(m: String): F[Unit] =
-      F.delay(logger.info(m))
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
@@ -100,12 +95,37 @@ object Routes {
         resp   <- toResponse(result)
       } yield resp
 
-    val keepAliveStream: Stream[F, FromServer] =
-      Stream
-        .constant[F, FromServer](FromServer.ConnectionKeepAlive)
-        .metered(KeepAliveDuration)
+    val webSocketConnection: F[Response[F]] = {
 
-    val webSocketConnection: F[Response[F]] =
+      val keepAliveStream: Stream[F, FromServer] =
+        Stream
+          .constant[F, FromServer](FromServer.ConnectionKeepAlive)
+          .metered(KeepAliveDuration)
+
+      def logFromServer(user: F[Option[User]], msg: FromServer): F[Unit] =
+        msg match {
+          case FromServer.ConnectionKeepAlive => debug(user, s"Sending ConnectionKeepAlive")
+          case _                              => info(user, s"Sending to client: ${trimmedMessage(msg)}")
+        }
+
+      def logWebSocketFrame(user: F[Option[User]], f: WebSocketFrame): F[Unit] = {
+
+        // The connection_init message payload has authorization information
+        // which should not be logged.
+        val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
+        val RedactedAuth = """$1 <REDACTED>"""
+
+        f match {
+          case Text(s, last) => info(user, s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+          case _             => info(user, s"Received message from client: $f")
+        }
+      }
+
+      def trimmedMessage(m: FromServer): String = {
+        val s = m.asJson.spaces2
+        if (s.length > 516) s"${s.take(512)} ..." else s
+      }
+
       for {
         replyQueue <- Queue.noneTerminated[F, FromServer]
         connection <- Connection(service, userClient, replyQueue)
@@ -115,12 +135,11 @@ object Routes {
           replyQueue
             .dequeue
             .mergeHaltL(keepAliveStream)
-            .map(_.asJson.spaces2)
-            .evalTap(m => connection.user.flatMap(u => info(s"Sending to client (user=$u) $m")))
-            .map(Text(_)),
+            .evalTap(logFromServer(connection.user, _))
+            .map(m => Text(m.asJson.spaces2)),
 
           // Input from client
-          _.evalTap(f => connection.user.flatMap(u => info(s"Received message from client (user=$u): $f")))
+          _.evalTap(logWebSocketFrame(connection.user, _))
            .evalMap {
              case Text(s, _) =>
                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
@@ -138,6 +157,7 @@ object Routes {
           Headers.of(Header("Sec-WebSocket-Protocol", "graphql-ws"))
         )
       } yield response
+    }
 
 
     HttpRoutes.of[F] {
@@ -145,23 +165,21 @@ object Routes {
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
-          u <- userClient.find(req)
-          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars, user=$u")
+          _ <- info(userClient.find(req), s"GET one off: query=$query, op=$op, vars=$vars")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / "odb" =>
         for {
-          u <- userClient.find(req)
-          _ <- info(s"POST one off: request=$req, user=$u")
+          _ <- info(userClient.find(req), s"POST one off: request=$req")
           r <- oneOffPost(req)
         } yield r
 
       // WebSocket connection request.
       case req @ GET -> Root / "ws" =>
         for {
-          _ <- info(s"GET web socket: $req")
+          _ <- info(None, s"GET web socket: $req")
           r <- webSocketConnection
         } yield r
 
