@@ -89,16 +89,13 @@ object Subscriptions {
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
 
-        def info(m: String): F[Unit] =
-          Logger[F].info(s"(user=$user): message=$m")
-
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
           events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))
 
         override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
           for {
             r <- SignallingRef(false)
-            in = r.discrete.evalTap(v => info(s"signalling ref = $v"))
+            in = r.discrete.evalTap(v => info(user, s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
             f <- F.start(es.compile.drain)
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))

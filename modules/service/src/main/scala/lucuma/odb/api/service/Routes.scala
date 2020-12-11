@@ -6,7 +6,6 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
-import lucuma.odb.syntax.logger._
 import cats.MonadError
 import cats.data.ValidatedNel
 import cats.effect.{ConcurrentEffect, Timer}
@@ -16,7 +15,6 @@ import clue.model.json._
 import fs2.Stream
 import fs2.concurrent.Queue
 import io.chrisdavenport.log4cats.Logger
-import io.chrisdavenport.log4cats.extras.LogLevel
 import io.circe._
 import io.circe.syntax._
 import org.http4s.circe._
@@ -42,12 +40,6 @@ object Routes {
   )(
     implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
-
-    def log(level: LogLevel, u: Option[User], s: String): F[Unit] =
-      Logger[F].log(level, s"(user=$u): $s")
-
-    def debug(u: Option[User], m: String): F[Unit] = log(LogLevel.Debug, u, m)
-    def info(u: Option[User], m: String): F[Unit]  = log(LogLevel.Info, u, m)
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
@@ -111,29 +103,21 @@ object Routes {
           .metered(KeepAliveDuration)
 
       def logFromServer(user: F[Option[User]], msg: FromServer): F[Unit] =
-        user.flatMap { u =>
-          msg match {
-            case FromServer.ConnectionKeepAlive =>
-              debug(u, s"Sending ConnectionKeepAlive")
-            case _                              =>
-              info(u, s"Sending to client: ${trimmedMessage(msg)}")
-          }
+        msg match {
+          case FromServer.ConnectionKeepAlive => debug(user, s"Sending ConnectionKeepAlive")
+          case _                              => info(user, s"Sending to client: ${trimmedMessage(msg)}")
         }
 
-      def logTextFrame(user: F[Option[User]], f: WebSocketFrame): F[Unit] = {
+      def logWebSocketFrame(user: F[Option[User]], f: WebSocketFrame): F[Unit] = {
 
         // The connection_init message payload has authorization information
         // which should not be logged.
-        val AuthRegEx    = """"Authorization":\s*"[^"]*"""".r.unanchored
-        val RedactedAuth = """"Authorization": <REDACTED>"""
+        val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
+        val RedactedAuth = """$1 <REDACTED>"""
 
-        user.flatMap { u =>
-          f match {
-            case Text(s, last) =>
-              info(u, s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-            case _             =>
-              info(u, s"Received message from client: $f")
-          }
+        f match {
+          case Text(s, last) => info(user, s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+          case _             => info(user, s"Received message from client: $f")
         }
       }
 
@@ -155,7 +139,7 @@ object Routes {
             .map(m => Text(m.asJson.spaces2)),
 
           // Input from client
-          _.evalTap(logTextFrame(connection.user, _))
+          _.evalTap(logWebSocketFrame(connection.user, _))
            .evalMap {
              case Text(s, _) =>
                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
@@ -181,16 +165,14 @@ object Routes {
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
-          u <- userClient.find(req)
-          _ <- info(u, s"GET one off: query=$query, op=$op, vars=$vars")
+          _ <- info(userClient.find(req), s"GET one off: query=$query, op=$op, vars=$vars")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / "odb" =>
         for {
-          u <- userClient.find(req)
-          _ <- info(u, s"POST one off: request=$req")
+          _ <- info(userClient.find(req), s"POST one off: request=$req")
           r <- oneOffPost(req)
         } yield r
 

@@ -125,7 +125,7 @@ object Connection {
     private def doTerminate(m: String): (ConnectionState[F], F[Unit]) =
       (new Terminated(None),
        for {
-         _ <- Logger[F].info(s"Request received on un-initialized connection: $m. Terminating.")
+         _ <- info(None, s"Request received on un-initialized connection: $m. Terminating.")
          _ <- replyQueue.enqueue1(None)
        } yield ()
       )
@@ -151,9 +151,6 @@ object Connection {
     subscriptions:     Subscriptions[F]
   )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
 
-    def info(m: String): F[Unit] =
-      Logger[F].info(s"(user=$user): message=$m")
-
     override def init(
       u: Option[User],
       r: Option[FromServer] => F[Unit],
@@ -161,7 +158,7 @@ object Connection {
     ): (ConnectionState[F], F[Unit]) =
       terminate.map { action =>
         for {
-          _ <- info("received connection_init on already initialized connection")
+          _ <- info(u, "received connection_init on already initialized connection")
           _ <- action
         } yield ()
       }
@@ -192,7 +189,7 @@ object Connection {
 
     def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
-        s <- odbService.subscribe(request)
+        s <- odbService.subscribe(user, request)
         _ <- subscriptions.add(id, s)
       } yield ()
 
@@ -216,7 +213,7 @@ object Connection {
   )(implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
 
     private val raiseError: (ConnectionState[F], F[Unit]) =
-      (this, M.raiseError(new RuntimeException(s"(user=$user): Connection was terminated")))
+      (this, M.raiseError(new RuntimeException(s"Connection was terminated: (user=$user)")))
 
     override def init(
       u: Option[User],
@@ -283,7 +280,7 @@ object Connection {
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.offer1(m)
-              _ <- Logger[F].info(s"(user=$user): Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+              _ <- info(user, s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
