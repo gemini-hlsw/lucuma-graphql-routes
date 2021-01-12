@@ -68,6 +68,7 @@ lazy val core = project
       "co.fs2"                     %% "fs2-core"                  % fs2Version,
       "com.github.julien-truffaut" %% "monocle-core"              % monocleVersion,
       "com.github.julien-truffaut" %% "monocle-state"             % monocleVersion,
+      "com.github.julien-truffaut" %% "monocle-macro"             % monocleVersion,
       "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
