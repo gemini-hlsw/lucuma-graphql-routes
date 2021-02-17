@@ -1,13 +1,13 @@
 val attoVersion                 = "0.9.1"
 val catsEffectVersion           = "2.3.1"
 val catsTestkitScalaTestVersion = "2.1.1"
-val catsVersion                 = "2.4.1"
+val catsVersion                 = "2.4.2"
 val circeOpticsVersion          = "0.13.0"
 val circeVersion                = "0.13.0"
 val cirisVersion                = "1.2.1"
-val clueVersion                 = "0.8.2"
+val clueVersion                 = "0.9.0"
 val fs2Version                  = "2.5.0"
-val http4sVersion               = "0.21.18"
+val http4sVersion               = "0.21.19"
 val jawnVersion                 = "1.0.3"
 val kindProjectorVersion        = "0.11.3"
 val logbackVersion              = "1.2.3"
@@ -20,8 +20,8 @@ val sangriaVersion              = "2.1.0"
 val sangriaCirceVersion         = "1.3.1"
 val singletonOpsVersion         = "0.5.2"
 
-val munitVersion                = "0.7.21"
-val disciplineMunitVersion      = "1.0.5"
+val munitVersion                = "0.7.22"
+val disciplineMunitVersion      = "1.0.6"
 
 
 inThisBuild(
