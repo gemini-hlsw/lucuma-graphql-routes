@@ -43,6 +43,11 @@ sealed trait Connection[F[_]] {
    */
   def receive(m: FromClient): F[Unit]
 
+  /**
+   * Close the connection, never to be heard from again.
+   */
+  def close: F[Unit]
+
 }
 
 object Connection {
@@ -72,7 +77,7 @@ object Connection {
      *
      * @return state transition and action to execute
      */
-    def init(
+    def reset(
       user: Option[User],
       send: Option[FromServer] => F[Unit],
       subs: Subscriptions[F]
@@ -93,11 +98,20 @@ object Connection {
     def stop(id: String): (ConnectionState[F], F[Unit])
 
     /**
-     * Terminates the connection, closing all ongoing subscriptions as well.
+     * Stops all the subscriptions.
      *
      * @return state transition and action to execute
      */
-    def terminate: (ConnectionState[F], F[Unit])
+    def stopAll: (ConnectionState[F], F[Unit])
+
+    /**
+     * Closes the connection, signaling that nothing more will be sent via
+     * the reply queue.
+     *
+     * @return state transition and action
+     */
+    def close: (ConnectionState[F], F[Unit])
+
   }
 
   /**
@@ -113,7 +127,7 @@ object Connection {
     override def user: Option[User] =
       None
 
-    override def init(
+    override def reset(
       user: Option[User],
       send: Option[FromServer] => F[Unit],
       subs: Subscriptions[F]
@@ -122,22 +136,26 @@ object Connection {
        send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
       )
 
-    private def doTerminate(m: String): (ConnectionState[F], F[Unit]) =
-      (new Terminated(None),
+    private def doClose(m: String): (ConnectionState[F], F[Unit]) =
+      (new Closed(None),
        for {
-         _ <- info(None, s"Request received on un-initialized connection: $m. Terminating.")
+         _ <- info(None, s"Request received on un-initialized connection: $m. Closing.")
          _ <- replyQueue.enqueue1(None)
        } yield ()
       )
 
     override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
-      doTerminate(s"start($id, $req)")
+      doClose(s"start($id, $req)")
 
     override def stop(id: String): (ConnectionState[F], F[Unit]) =
-      doTerminate(s"stop($id)")
+      doClose(s"stop($id)")
 
-    override def terminate: (ConnectionState[F], F[Unit]) =
-      doTerminate("terminate")
+    override val stopAll: (ConnectionState[F], F[Unit]) =
+      doClose("stopAll")
+
+    override val close: (ConnectionState[F], F[Unit]) =
+      doClose("close")
+
   }
 
   /**
@@ -151,17 +169,16 @@ object Connection {
     subscriptions:     Subscriptions[F]
   )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
 
-    override def init(
+    override def reset(
       u: Option[User],
       r: Option[FromServer] => F[Unit],
       s: Subscriptions[F]
     ): (ConnectionState[F], F[Unit]) =
-      terminate.map { action =>
-        for {
-          _ <- info(u, "received connection_init on already initialized connection")
-          _ <- action
-        } yield ()
-      }
+      (new Connected(odbService, u, r, s),
+        subscriptions.removeAll  *>
+          r(Some(ConnectionAck)) *>
+          r(Some(ConnectionKeepAlive))
+      )
 
     override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
 
@@ -184,8 +201,8 @@ object Connection {
     override def stop(id: String): (ConnectionState[F], F[Unit]) =
       (this, subscriptions.remove(id))
 
-    override val terminate: (ConnectionState[F], F[Unit]) =
-      (new Terminated(user), subscriptions.terminate *> send(None))
+    override val stopAll: (ConnectionState[F], F[Unit]) =
+      (this, subscriptions.removeAll)
 
     def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
       for {
@@ -202,20 +219,21 @@ object Connection {
              )
       } yield ()
 
+    override val close: (ConnectionState[F], F[Unit]) =
+      (new Closed(user), subscriptions.removeAll *> send(None))
   }
 
   /**
-   * Terminated state.  All requests other than `terminate` raise an error, the
-   * connection having been terminated.
+   * Closed state.  All requests raise an error, the connection having been closed.
    */
-  final class Terminated[F[_]](
+  final class Closed[F[_]](
     override val user: Option[User]
   )(implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
 
     private val raiseError: (ConnectionState[F], F[Unit]) =
       (this, M.raiseError(new RuntimeException(s"Connection was terminated: (user=$user)")))
 
-    override def init(
+    override def reset(
       u: Option[User],
       r: Option[FromServer] => F[Unit],
       s: Subscriptions[F]
@@ -228,9 +246,11 @@ object Connection {
     override def stop(id: String): (ConnectionState[F], F[Unit]) =
       raiseError
 
-    override val terminate: (ConnectionState[F], F[Unit]) =
-      (this, F.unit)
+    override val stopAll: (ConnectionState[F], F[Unit]) =
+      raiseError
 
+    override val close: (ConnectionState[F], F[Unit]) =
+      (this, F.unit)
   }
 
 
@@ -289,7 +309,7 @@ object Connection {
             u <- a.fold(F.pure(Option.empty[User]))(userClient.get)
             r  = reply(u)
             s <- Subscriptions(u, r)
-            _ <- handle(_.init(u, r, s))
+            _ <- handle(_.reset(u, r, s))
           } yield ()
 
         }
@@ -299,8 +319,11 @@ object Connection {
             case ConnectionInit(m)   => init(m)
             case Start(id, request)  => handle(_.start(id, request))
             case Stop(id)            => handle(_.stop(id))
-            case ConnectionTerminate => handle(_.terminate)
+            case ConnectionTerminate => handle(_.stopAll)
           }
+
+        override def close: F[Unit] =
+          handle(_.close)
       }
     }
 }
