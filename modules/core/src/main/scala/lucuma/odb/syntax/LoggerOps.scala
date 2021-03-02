@@ -3,8 +3,8 @@
 
 package lucuma.odb.syntax
 
-import io.chrisdavenport.log4cats.Logger
-import io.chrisdavenport.log4cats.extras.LogLevel
+import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.extras.LogLevel
 
 final class LoggerOps[F[_]](val self: Logger[F]) extends AnyVal {
 

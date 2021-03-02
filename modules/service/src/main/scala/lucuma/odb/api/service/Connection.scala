@@ -20,7 +20,7 @@ import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import fs2.concurrent.NoneTerminatedQueue
 import io.circe.Json
-import io.chrisdavenport.log4cats.Logger
+import org.typelevel.log4cats.Logger
 import org.http4s.headers.Authorization
 import sangria.parser.QueryParser
 
