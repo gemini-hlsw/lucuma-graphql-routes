@@ -28,7 +28,7 @@ stop with:
 service/reStop
 ```
 
-Then browse to `http://localhost:8080/odb` to use the GraphQL Playground.  The
+Then browse to `http://localhost:8080/playground.html` to use the GraphQL Playground.  The
 Playground UI contains generated schema documentation.
 
 ## Organization
