@@ -148,7 +148,7 @@ object Routes {
                )
 
              case Close(_)   =>
-               connection.receive(FromClient.ConnectionTerminate)
+               connection.close
 
              case f          =>
                M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))

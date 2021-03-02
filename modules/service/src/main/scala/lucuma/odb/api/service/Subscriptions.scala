@@ -41,7 +41,7 @@ trait Subscriptions[F[_]] {
   /**
    * Removes all subscriptions.
    */
-  def terminate: F[Unit]
+  def removeAll: F[Unit]
 
 }
 
@@ -107,7 +107,7 @@ object Subscriptions {
             _ <- m.get(id).fold(().pure[F])(s => s.stop *> send(Some(Complete(s.id))))
           } yield ()
 
-        override def terminate: F[Unit] =
+        override def removeAll: F[Unit] =
           for {
             m <- subscriptions.getAndSet(Map.empty[String, Subscription[F]])
             _ <- m.values.toList.traverse_(s => s.stop *> send(Some(Complete(s.id))))
