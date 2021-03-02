@@ -14,7 +14,7 @@ import clue.model.StreamingMessage.{FromClient, FromServer}
 import clue.model.json._
 import fs2.Stream
 import fs2.concurrent.Queue
-import io.chrisdavenport.log4cats.Logger
+import org.typelevel.log4cats.Logger
 import io.circe._
 import io.circe.syntax._
 import org.http4s.circe._

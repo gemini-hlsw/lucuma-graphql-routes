@@ -5,14 +5,14 @@ val catsVersion                 = "2.4.2"
 val circeOpticsVersion          = "0.13.0"
 val circeVersion                = "0.13.0"
 val cirisVersion                = "1.2.1"
-val clueVersion                 = "0.9.0"
+val clueVersion                 = "0.10.2"
 val fs2Version                  = "2.5.0"
 val http4sVersion               = "0.21.19"
 val jawnVersion                 = "1.1.0"
 val kindProjectorVersion        = "0.11.3"
 val logbackVersion              = "1.2.3"
-val log4catsVersion             = "1.1.1"
-val lucumaCoreVersion           = "0.7.7"
+val log4catsVersion             = "1.2.0"
+val lucumaCoreVersion           = "0.7.8"
 val lucumaSsoVersion            = "0.0.9"
 val monocleVersion              = "2.1.0"
 val refinedVersion              = "0.9.21"
@@ -84,7 +84,7 @@ lazy val core = project
       "io.circe"                   %% "circe-generic"             % circeVersion,
       "io.circe"                   %% "circe-generic-extras"      % circeVersion,
       "org.typelevel"              %% "jawn-parser"               % jawnVersion,
-      "io.chrisdavenport"          %% "log4cats-slf4j"            % log4catsVersion,
+      "org.typelevel"              %% "log4cats-slf4j"            % log4catsVersion,
       "ch.qos.logback"             %  "logback-classic"           % logbackVersion,
       "eu.timepit"                 %% "singleton-ops"             % singletonOpsVersion,
       "eu.timepit"                 %% "refined"                   % refinedVersion,
@@ -125,7 +125,7 @@ lazy val service = project
       "io.circe"                   %% "circe-generic-extras"      % circeVersion,
       "is.cir"                     %% "ciris"                     % cirisVersion,
       "org.typelevel"              %% "jawn-parser"               % jawnVersion,
-      "io.chrisdavenport"          %% "log4cats-slf4j"            % log4catsVersion,
+      "org.typelevel"              %% "log4cats-slf4j"            % log4catsVersion,
       "ch.qos.logback"             %  "logback-classic"           % logbackVersion,
       "org.http4s"                 %% "http4s-blaze-server"       % http4sVersion,
       "org.http4s"                 %% "http4s-blaze-client"       % http4sVersion,
