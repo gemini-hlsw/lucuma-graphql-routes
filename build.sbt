@@ -83,6 +83,7 @@ lazy val core = project
       "io.circe"                   %% "circe-parser"              % circeVersion,
       "io.circe"                   %% "circe-generic"             % circeVersion,
       "io.circe"                   %% "circe-generic-extras"      % circeVersion,
+      "io.circe"                   %% "circe-refined"             % circeVersion,
       "org.typelevel"              %% "jawn-parser"               % jawnVersion,
       "org.typelevel"              %% "log4cats-slf4j"            % log4catsVersion,
       "ch.qos.logback"             %  "logback-classic"           % logbackVersion,
