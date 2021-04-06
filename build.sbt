@@ -5,17 +5,17 @@ val catsVersion                 = "2.5.0"
 val circeOpticsVersion          = "0.13.0"
 val circeVersion                = "0.13.0"
 val cirisVersion                = "1.2.1"
-val clueVersion                 = "0.11.3"
+val clueVersion                 = "0.13.1"
 val fs2Version                  = "2.5.4"
 val http4sVersion               = "0.21.21"
-val jawnVersion                 = "1.1.0"
+val jawnVersion                 = "1.1.1"
 val kindProjectorVersion        = "0.11.3"
 val logbackVersion              = "1.2.3"
-val log4catsVersion             = "1.2.1"
-val lucumaCoreVersion           = "0.7.9"
+val log4catsVersion             = "1.2.2"
+val lucumaCoreVersion           = "0.7.10"
 val lucumaSsoVersion            = "0.0.9"
 val monocleVersion              = "2.1.0"
-val refinedVersion              = "0.9.22"
+val refinedVersion              = "0.9.23"
 val sangriaVersion              = "2.1.0"
 val sangriaCirceVersion         = "1.3.1"
 val singletonOpsVersion         = "0.5.2"
@@ -41,7 +41,7 @@ lazy val commonSettings = Seq(
 )
 
 lazy val noPublishSettings = Seq(
-  skip in publish := true
+  publish / skip := true
 )
 
 lazy val modules: List[ProjectReference] = List(
