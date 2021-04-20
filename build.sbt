@@ -1,5 +1,5 @@
 val attoVersion                 = "0.9.3"
-val catsEffectVersion           = "2.4.1"
+val catsEffectVersion           = "2.5.0"
 val catsTestkitScalaTestVersion = "2.1.3"
 val catsVersion                 = "2.6.0"
 val circeOpticsVersion          = "0.13.0"
@@ -16,11 +16,11 @@ val lucumaCoreVersion           = "0.7.10"
 val lucumaSsoVersion            = "0.0.9"
 val monocleVersion              = "2.1.0"
 val refinedVersion              = "0.9.23"
-val sangriaVersion              = "2.1.0"
+val sangriaVersion              = "2.1.3"
 val sangriaCirceVersion         = "1.3.1"
 val singletonOpsVersion         = "0.5.2"
 
-val munitVersion                = "0.7.23"
+val munitVersion                = "0.7.25"
 val disciplineMunitVersion      = "1.0.8"
 
 
