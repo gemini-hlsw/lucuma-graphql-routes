@@ -3,6 +3,7 @@ val catsEffectVersion           = "2.5.1"
 val catsMtlVersion              = "1.2.1"
 val catsTestkitScalaTestVersion = "2.1.4"
 val catsVersion                 = "2.6.1"
+val catsTimeVersion             = "0.3.4"
 val circeOpticsVersion          = "0.13.0"
 val circeVersion                = "0.13.0"
 val cirisVersion                = "1.2.1"
@@ -79,6 +80,7 @@ lazy val core = project
       "org.typelevel"              %% "cats-core"                 % catsVersion,
       "org.typelevel"              %% "cats-effect"               % catsEffectVersion,
       "org.typelevel"              %% "cats-mtl"                  % catsMtlVersion,
+      "io.chrisdavenport"          %% "cats-time"                 % catsTimeVersion,
       "io.circe"                   %% "circe-core"                % circeVersion,
       "io.circe"                   %% "circe-literal"             % circeVersion,
       "io.circe"                   %% "circe-optics"              % circeOpticsVersion,
@@ -92,6 +94,7 @@ lazy val core = project
       "eu.timepit"                 %% "singleton-ops"             % singletonOpsVersion,
       "eu.timepit"                 %% "refined"                   % refinedVersion,
       "eu.timepit"                 %% "refined-cats"              % refinedVersion,
+
 
       "edu.gemini"                 %% "lucuma-core-testkit"       % lucumaCoreVersion      % Test,
       "org.scalameta"              %% "munit"                     % munitVersion           % Test,
