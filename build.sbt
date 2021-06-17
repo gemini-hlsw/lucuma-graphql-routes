@@ -3,6 +3,7 @@ val catsEffectVersion           = "2.5.1"
 val catsMtlVersion              = "1.2.1"
 val catsTestkitScalaTestVersion = "2.1.5"
 val catsVersion                 = "2.6.1"
+val catsScalacheckVersion       = "0.3.0"
 val catsTimeVersion             = "0.3.4"
 val circeOpticsVersion          = "0.14.1"
 val circeVersion                = "0.14.1"
@@ -97,6 +98,7 @@ lazy val core = project
 
 
       "edu.gemini"                 %% "lucuma-core-testkit"       % lucumaCoreVersion      % Test,
+      "io.chrisdavenport"          %% "cats-scalacheck"           % catsScalacheckVersion  % Test,
       "org.scalameta"              %% "munit"                     % munitVersion           % Test,
       "org.typelevel"              %% "discipline-munit"          % disciplineMunitVersion % Test
     ),
