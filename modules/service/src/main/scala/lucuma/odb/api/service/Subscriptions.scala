@@ -6,11 +6,11 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 
+import cats.Monad
+import cats.effect.{Async, Fiber, Ref}
+import cats.implicits._
 import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromServer._
-import cats.effect.{ConcurrentEffect, Fiber}
-import cats.effect.concurrent.Ref
-import cats.implicits._
 import fs2.{Pipe, Stream}
 import fs2.concurrent.SignallingRef
 import org.typelevel.log4cats.Logger
@@ -57,9 +57,9 @@ object Subscriptions {
    * @param results Underlying stream of results, each of which is an Either
    *                error or subscription query match
    */
-  private final class Subscription[F[_]: ConcurrentEffect](
+  private final class Subscription[F[_]: Monad](
     val id:      String,
-    val results: Fiber[F, Unit],
+    val results: Fiber[F, Throwable, Unit],
     val stopped: SignallingRef[F, Boolean]
   ) {
 
@@ -81,10 +81,10 @@ object Subscriptions {
       case Right(json) => json.toStreamingMessage(id)
     }
 
-  def apply[F[_]: Logger](
+  def apply[F[_]: Logger: Async](
     user: Option[User],
     send: Option[FromServer] => F[Unit]
-  )(implicit F: ConcurrentEffect[F]): F[Subscriptions[F]] =
+  ): F[Subscriptions[F]] =
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
@@ -97,7 +97,7 @@ object Subscriptions {
             r <- SignallingRef(false)
             in = r.discrete.evalTap(v => info(user, s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
-            f <- F.start(es.compile.drain)
+            f <- Async[F].start(es.compile.drain)
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))
           } yield ()
 
