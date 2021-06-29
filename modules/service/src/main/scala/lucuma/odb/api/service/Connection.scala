@@ -6,10 +6,9 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
-
-import cats.{Applicative, MonadError}
-import cats.effect.concurrent.Ref
-import cats.effect.ConcurrentEffect
+import cats.MonadError
+import cats.effect.{Async, Ref}
+import cats.effect.std.Queue
 import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -18,7 +17,6 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
-import fs2.concurrent.NoneTerminatedQueue
 import io.circe.Json
 import org.typelevel.log4cats.Logger
 import org.http4s.headers.Authorization
@@ -119,148 +117,159 @@ object Connection {
    * contains the user authorization header.  Once it receives it, we transition
    * to `Connected`.
    */
-  final class PendingInit[F[_]: Logger](
+  def pendingInit[F[_]: Logger](
     odbService: OdbService[F],
-    replyQueue: NoneTerminatedQueue[F, FromServer]
-  )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
+    replyQueue: Queue[F, Option[FromServer]]
+  )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
-    override def user: Option[User] =
-      None
+    new ConnectionState[F] {
+      override def user: Option[User] =
+        None
 
-    override def reset(
-      user: Option[User],
-      send: Option[FromServer] => F[Unit],
-      subs: Subscriptions[F]
-    ): (ConnectionState[F], F[Unit]) =
-      (new Connected(odbService, user, send, subs),
-       send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
-      )
+      override def reset(
+        user: Option[User],
+        send: Option[FromServer] => F[Unit],
+        subs: Subscriptions[F]
+      ): (ConnectionState[F], F[Unit]) =
+        (connected(odbService, user, send, subs),
+         send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
+        )
 
-    private def doClose(m: String): (ConnectionState[F], F[Unit]) =
-      (new Closed(None),
-       for {
-         _ <- info(None, s"Request received on un-initialized connection: $m. Closing.")
-         _ <- replyQueue.enqueue1(None)
-       } yield ()
-      )
+      private def doClose(m: String): (ConnectionState[F], F[Unit]) =
+        (closed(None),
+         for {
+           _ <- info(None, s"Request received on un-initialized connection: $m. Closing.")
+           _ <- replyQueue.offer(None)
+         } yield ()
+        )
 
-    override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
-      doClose(s"start($id, $req)")
+      override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
+        doClose(s"start($id, $req)")
 
-    override def stop(id: String): (ConnectionState[F], F[Unit]) =
-      doClose(s"stop($id)")
+      override def stop(id: String): (ConnectionState[F], F[Unit]) =
+        doClose(s"stop($id)")
 
-    override val stopAll: (ConnectionState[F], F[Unit]) =
-      doClose("stopAll")
+      override val stopAll: (ConnectionState[F], F[Unit]) =
+        doClose("stopAll")
 
-    override val close: (ConnectionState[F], F[Unit]) =
-      doClose("close")
+      override val close: (ConnectionState[F], F[Unit]) =
+        doClose("close")
 
-  }
+    }
 
   /**
    * Connected state. Post-initialization, we stay in the `Connected` state
    * until explicitly terminated by the client.
    */
-  final class Connected[F[_]: Logger](
-    odbService:        OdbService[F],
-    override val user: Option[User],
-    send:              Option[FromServer] => F[Unit],
-    subscriptions:     Subscriptions[F]
-  )(implicit F: ConcurrentEffect[F]) extends ConnectionState[F] {
+  def connected[F[_]: Logger](
+    odbService:    OdbService[F],
+    usr:           Option[User],
+    send:          Option[FromServer] => F[Unit],
+    subscriptions: Subscriptions[F]
+  )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
-    override def reset(
-      u: Option[User],
-      r: Option[FromServer] => F[Unit],
-      s: Subscriptions[F]
-    ): (ConnectionState[F], F[Unit]) =
-      (new Connected(odbService, u, r, s),
-        subscriptions.removeAll  *>
-          r(Some(ConnectionAck)) *>
-          r(Some(ConnectionKeepAlive))
-      )
+    new ConnectionState[F] {
 
-    override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
+      override def reset(
+        u: Option[User],
+        r: Option[FromServer] => F[Unit],
+        s: Subscriptions[F]
+      ): (ConnectionState[F], F[Unit]) =
+        (connected(odbService, u, r, s),
+          subscriptions.removeAll  *>
+            r(Some(ConnectionAck)) *>
+            r(Some(ConnectionKeepAlive))
+        )
 
-      val parseResult =
-        QueryParser
-          .parse(raw.query)
-          .toEither
-          .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
+      override def user: Option[User] =
+        usr
 
-      val action = parseResult match {
-        case Left(err)                        => send(Some(Error(id, err.format)))
-        case Right(req) if req.isSubscription => subscribe(id, req)
-        case Right(req)                       => execute(id, req)
+      override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
+
+        val parseResult =
+          QueryParser
+            .parse(raw.query)
+            .toEither
+            .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
+
+        val action = parseResult match {
+          case Left(err)                        => send(Some(Error(id, err.format)))
+          case Right(req) if req.isSubscription => subscribe(id, req)
+          case Right(req)                       => execute(id, req)
+        }
+
+        (this, action)
+
       }
 
-      (this, action)
+      override def stop(id: String): (ConnectionState[F], F[Unit]) =
+        (this, subscriptions.remove(id))
 
+      override val stopAll: (ConnectionState[F], F[Unit]) =
+        (this, subscriptions.removeAll)
+
+      def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
+        for {
+          s <- odbService.subscribe(user, request)
+          _ <- subscriptions.add(id, s)
+        } yield ()
+
+      def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
+        for {
+          r <- odbService.query(request)
+          _ <- r.fold(
+                 err  => send(Some(Error(id, err.format))),
+                 json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
+               )
+        } yield ()
+
+      override val close: (ConnectionState[F], F[Unit]) =
+        (closed(user), subscriptions.removeAll *> send(None))
     }
-
-    override def stop(id: String): (ConnectionState[F], F[Unit]) =
-      (this, subscriptions.remove(id))
-
-    override val stopAll: (ConnectionState[F], F[Unit]) =
-      (this, subscriptions.removeAll)
-
-    def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
-      for {
-        s <- odbService.subscribe(user, request)
-        _ <- subscriptions.add(id, s)
-      } yield ()
-
-    def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
-      for {
-        r <- odbService.query(request)
-        _ <- r.fold(
-               err  => send(Some(Error(id, err.format))),
-               json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
-             )
-      } yield ()
-
-    override val close: (ConnectionState[F], F[Unit]) =
-      (new Closed(user), subscriptions.removeAll *> send(None))
-  }
 
   /**
    * Closed state.  All requests raise an error, the connection having been closed.
    */
-  final class Closed[F[_]](
-    override val user: Option[User]
-  )(implicit F: Applicative[F], M: MonadError[F, Throwable]) extends ConnectionState[F] {
+  def closed[F[_]](
+    usr: Option[User]
+  )(implicit M: MonadError[F, Throwable]): ConnectionState[F] =
 
-    private val raiseError: (ConnectionState[F], F[Unit]) =
-      (this, M.raiseError(new RuntimeException(s"Connection was terminated: (user=$user)")))
+    new ConnectionState[F] {
 
-    override def reset(
-      u: Option[User],
-      r: Option[FromServer] => F[Unit],
-      s: Subscriptions[F]
-    ): (ConnectionState[F], F[Unit]) =
-      raiseError
+      override def user: Option[User] =
+        usr
 
-    override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
-      raiseError
+      private val raiseError: (ConnectionState[F], F[Unit]) =
+        (this, M.raiseError(new RuntimeException(s"Connection was terminated: (user=$user)")))
 
-    override def stop(id: String): (ConnectionState[F], F[Unit]) =
-      raiseError
+      override def reset(
+        u: Option[User],
+        r: Option[FromServer] => F[Unit],
+        s: Subscriptions[F]
+      ): (ConnectionState[F], F[Unit]) =
+        raiseError
 
-    override val stopAll: (ConnectionState[F], F[Unit]) =
-      raiseError
+      override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
+        raiseError
 
-    override val close: (ConnectionState[F], F[Unit]) =
-      (this, F.unit)
-  }
+      override def stop(id: String): (ConnectionState[F], F[Unit]) =
+        raiseError
+
+      override val stopAll: (ConnectionState[F], F[Unit]) =
+        raiseError
+
+      override val close: (ConnectionState[F], F[Unit]) =
+        (this, M.unit)
+    }
 
 
   def apply[F[_]: Logger](
     odbService: OdbService[F],
     userClient: SsoClient[F, User],
-    replyQueue: NoneTerminatedQueue[F, FromServer]
-  )(implicit F: ConcurrentEffect[F]): F[Connection[F]] =
+    replyQueue: Queue[F, Option[FromServer]]
+  )(implicit F: Async[F]): F[Connection[F]] =
 
-    Ref.of(new PendingInit[F](odbService, replyQueue): ConnectionState[F]).map { stateRef =>
+    Ref.of(pendingInit[F](odbService, replyQueue)).map { stateRef =>
 
       new Connection[F] {
 
@@ -299,7 +308,7 @@ object Connection {
           // just offers a message to the reply queue and logs it.
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
             for {
-              b <- replyQueue.offer1(m)
+              b <- replyQueue.tryOffer(m)
               _ <- info(user, s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }

@@ -6,14 +6,14 @@ package lucuma.odb.api.service
 import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
-import cats.MonadError
+
 import cats.data.ValidatedNel
-import cats.effect.{ConcurrentEffect, Timer}
+import cats.effect.Async
+import cats.effect.std.Queue
 import cats.implicits._
 import clue.model.StreamingMessage.{FromClient, FromServer}
 import clue.model.json._
 import fs2.Stream
-import fs2.concurrent.Queue
 import org.typelevel.log4cats.Logger
 import io.circe._
 import io.circe.syntax._
@@ -23,6 +23,7 @@ import org.http4s.server.websocket.WebSocketBuilder
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.{Close, Text}
 import org.http4s.{Header, Headers, HttpRoutes, InvalidMessageBodyFailure, ParseFailure, QueryParamDecoder, Request, Response}
+import org.typelevel.ci.CIString
 import sangria.ast.Document
 import sangria.parser.QueryParser
 
@@ -34,11 +35,9 @@ object Routes {
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]: Logger](
+  def forService[F[_]: Logger: Async](
     service:    OdbService[F],
     userClient: SsoClient[F, User]
-  )(
-    implicit F: ConcurrentEffect[F], M: MonadError[F, Throwable], T: Timer[F]
   ): HttpRoutes[F] = {
 
     val dsl = new Http4sDsl[F]{}
@@ -127,35 +126,35 @@ object Routes {
       }
 
       for {
-        replyQueue <- Queue.noneTerminated[F, FromServer]
+        replyQueue <- Queue.unbounded[F, Option[FromServer]]
         connection <- Connection(service, userClient, replyQueue)
-        response   <- WebSocketBuilder[F].build(
+        response   <- WebSocketBuilder[F].copy(
+            headers = Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-ws"))
+          ).build(
 
-          // Replies to client
-          replyQueue
-            .dequeue
-            .mergeHaltL(keepAliveStream)
-            .evalTap(logFromServer(connection.user, _))
-            .map(m => Text(m.asJson.spaces2)),
+            // Replies to client
+            Stream
+              .fromQueueNoneTerminated(replyQueue)
+              .mergeHaltL(keepAliveStream)
+              .evalTap(logFromServer(connection.user, _))
+              .map(m => Text(m.asJson.spaces2)),
 
-          // Input from client
-          _.evalTap(logWebSocketFrame(connection.user, _))
-           .evalMap {
-             case Text(s, _) =>
-               scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                 e => M.raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
-                 m => connection.receive(m)
-               )
+            // Input from client
+            _.evalTap(logWebSocketFrame(connection.user, _))
+             .evalMap {
+               case Text(s, _) =>
+                 scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
+                   e => Async[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+                   m => connection.receive(m)
+                 )
 
-             case Close(_)   =>
-               connection.close
+               case Close(_)   =>
+                 connection.close
 
-             case f          =>
-               M.raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
-           },
-
-          Headers.of(Header("Sec-WebSocket-Protocol", "graphql-ws"))
-        )
+               case f          =>
+                 Async[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+             }
+          )
       } yield response
     }
 
