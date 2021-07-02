@@ -23,7 +23,7 @@ val sangriaVersion              = "2.1.3"
 val sangriaCirceVersion         = "1.3.2"
 val singletonOpsVersion         = "0.5.2"
 
-val munitVersion                = "0.7.26"
+val munitVersion                = "0.7.27"
 val disciplineMunitVersion      = "1.0.9"
 
 
