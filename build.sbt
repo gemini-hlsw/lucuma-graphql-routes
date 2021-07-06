@@ -33,14 +33,15 @@ inThisBuild(
     addCompilerPlugin(
       ("org.typelevel" % "kind-projector" % kindProjectorVersion).cross(CrossVersion.full)
     )
-  ) ++ gspPublishSettings
+  ) ++ lucumaPublishSettings
 )
 
 lazy val commonSettings = Seq(
   libraryDependencies ++= Seq(
     "org.typelevel"     %% "cats-testkit"           % catsVersion                 % "test",
     "org.typelevel"     %% "cats-testkit-scalatest" % catsTestkitScalaTestVersion % "test"
-  )
+  ),
+  scalacOptions --= Seq("-Xfatal-warnings").filterNot(_ => insideCI.value)
 )
 
 lazy val noPublishSettings = Seq(
