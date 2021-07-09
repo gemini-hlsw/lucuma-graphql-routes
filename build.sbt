@@ -14,10 +14,10 @@ val fs2Version                  = "3.0.6"
 val jawnVersion                 = "1.2.0"
 val kindProjectorVersion        = "0.13.0"
 val logbackVersion              = "1.2.3"
-val lucumaCoreVersion           = "0.10.1"
+val lucumaCoreVersion           = "0.0.0+1-4570bee1-SNAPSHOT"
 // val lucumaSsoVersion            = "0.0.9" AWAITING CE3
 val log4catsVersion             = "2.1.1"
-val monocleVersion              = "2.1.0"
+val monocleVersion              = "3.0.0"
 val refinedVersion              = "0.9.26"
 val sangriaVersion              = "2.1.3"
 val sangriaCirceVersion         = "1.3.2"
@@ -70,9 +70,9 @@ lazy val core = project
     ),
     libraryDependencies ++= Seq(
       "co.fs2"                     %% "fs2-core"                  % fs2Version,
-      "com.github.julien-truffaut" %% "monocle-core"              % monocleVersion,
-      "com.github.julien-truffaut" %% "monocle-state"             % monocleVersion,
-      "com.github.julien-truffaut" %% "monocle-macro"             % monocleVersion,
+      "dev.optics"                 %% "monocle-core"              % monocleVersion,
+      "dev.optics"                 %% "monocle-state"             % monocleVersion,
+      "dev.optics"                 %% "monocle-macro"             % monocleVersion,
       "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
@@ -117,7 +117,7 @@ lazy val service = project
       "-Ymacro-annotations"
     ),
     libraryDependencies ++= Seq(
-      "com.github.julien-truffaut" %% "monocle-core"              % monocleVersion,
+      "dev.optics"                 %% "monocle-core"              % monocleVersion,
       "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
