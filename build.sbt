@@ -66,7 +66,8 @@ lazy val core = project
   .settings(
     name := "lucuma-odb-api-core",
     scalacOptions ++= Seq(
-      "-Ymacro-annotations"
+      "-Ymacro-annotations",
+      "-Ywarn-macros:after"
     ),
     libraryDependencies ++= Seq(
       "co.fs2"                     %% "fs2-core"                  % fs2Version,
