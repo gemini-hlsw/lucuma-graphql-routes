@@ -15,7 +15,7 @@ val jawnVersion                 = "1.2.0"
 val kindProjectorVersion        = "0.13.0"
 val logbackVersion              = "1.2.4"
 val lucumaCoreVersion           = "0.11.0"
-// val lucumaSsoVersion            = "0.0.9" AWAITING CE3
+val lucumaSsoVersion            = "0.0.10"
 val log4catsVersion             = "2.1.1"
 val monocleVersion              = "3.0.0"
 val refinedVersion              = "0.9.27"
@@ -78,7 +78,7 @@ lazy val core = project
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
       "edu.gemini"                 %% "lucuma-core"               % lucumaCoreVersion,
-//      "edu.gemini"                 %% "lucuma-sso-backend-client" % lucumaSsoVersion,
+      "edu.gemini"                 %% "lucuma-sso-backend-client" % lucumaSsoVersion,
       "org.tpolecat"               %% "atto-core"                 % attoVersion,
       "org.typelevel"              %% "cats-core"                 % catsVersion,
       "org.typelevel"              %% "cats-effect"               % catsEffectVersion,
