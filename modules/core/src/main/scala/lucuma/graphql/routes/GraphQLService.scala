@@ -1,7 +1,7 @@
 // Copyright (c) 2016-2021 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
-package lucuma.odb.api.service
+package lucuma.graphql.routes
 
 import fs2.Stream
 import io.circe._
