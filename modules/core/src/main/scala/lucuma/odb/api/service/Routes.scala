@@ -36,7 +36,7 @@ object Routes {
     5.seconds
 
   def forService[F[_]: Logger: Async](
-    service:    OdbService[F],
+    service:    GraphQLService[F],
     userClient: SsoClient[F, User]
   ): HttpRoutes[F] = {
 

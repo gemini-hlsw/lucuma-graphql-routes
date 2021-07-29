@@ -48,16 +48,10 @@ lazy val noPublishSettings = Seq(
   publish / skip := true
 )
 
-lazy val modules: List[ProjectReference] = List(
-  core,
-  service
-)
-
-lazy val `gem-odb-api` = project.in(file("."))
+lazy val `gem-graphql-routes` = project.in(file("."))
   .settings(commonSettings)
   .settings(noPublishSettings)
-  .aggregate(modules:_*)
-  .disablePlugins(RevolverPlugin)
+  .aggregate(core)
 
 lazy val core = project
   .in(file("modules/core"))
@@ -97,33 +91,11 @@ lazy val core = project
       "eu.timepit"                 %% "singleton-ops"             % singletonOpsVersion,
       "eu.timepit"                 %% "refined"                   % refinedVersion,
       "eu.timepit"                 %% "refined-cats"              % refinedVersion,
-
-
-      "edu.gemini"                 %% "lucuma-core-testkit"       % lucumaCoreVersion      % Test,
-      "io.chrisdavenport"          %% "cats-scalacheck"           % catsScalacheckVersion  % Test,
-      "org.scalameta"              %% "munit"                     % munitVersion           % Test,
-      "org.typelevel"              %% "discipline-munit"          % disciplineMunitVersion % Test
-    ),
-    testFrameworks += new TestFramework("munit.Framework")
-  )
-
-lazy val service = project
-  .in(file("modules/service"))
-  .enablePlugins(AutomateHeaderPlugin)
-  .dependsOn(core)
-  .settings(commonSettings)
-  .settings(
-    name := "lucuma-odb-api-service",
-    scalacOptions ++= Seq(
-      "-Ymacro-annotations"
-    ),
-    libraryDependencies ++= Seq(
       "dev.optics"                 %% "monocle-core"              % monocleVersion,
       "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
       "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
       "edu.gemini"                 %% "lucuma-core"               % lucumaCoreVersion,
-//      "edu.gemini"                 %% "lucuma-sso-backend-client" % lucumaSsoVersion,
       "org.tpolecat"               %% "atto-core"                 % attoVersion,
       "org.typelevel"              %% "cats-core"                 % catsVersion,
       "org.typelevel"              %% "cats-effect"               % catsEffectVersion,
@@ -141,6 +113,14 @@ lazy val service = project
       "org.http4s"                 %% "http4s-blaze-server"       % http4sVersion,
       "org.http4s"                 %% "http4s-blaze-client"       % http4sVersion,
       "org.http4s"                 %% "http4s-circe"              % http4sVersion,
-      "org.http4s"                 %% "http4s-dsl"                % http4sVersion
-    )
-  ).enablePlugins(JavaAppPackaging)
+      "org.http4s"                 %% "http4s-dsl"                % http4sVersion,
+
+
+      "edu.gemini"                 %% "lucuma-core-testkit"       % lucumaCoreVersion      % Test,
+      "io.chrisdavenport"          %% "cats-scalacheck"           % catsScalacheckVersion  % Test,
+      "org.scalameta"              %% "munit"                     % munitVersion           % Test,
+      "org.typelevel"              %% "discipline-munit"          % disciplineMunitVersion % Test
+    ),
+    testFrameworks += new TestFramework("munit.Framework")
+  )
+

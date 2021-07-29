@@ -4,7 +4,7 @@
 package lucuma.odb.api
 
 import lucuma.core.model.User
-import lucuma.odb.syntax.logger._
+import lucuma.odb.api.service.syntax.logger._
 
 import cats.FlatMap
 import cats.syntax.all._

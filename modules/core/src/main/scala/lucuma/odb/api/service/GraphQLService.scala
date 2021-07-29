@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe._
 import lucuma.core.model.User
 
-trait OdbService[F[_]] {
+trait GraphQLService[F[_]] {
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
 

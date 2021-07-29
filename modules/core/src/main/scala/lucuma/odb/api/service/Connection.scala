@@ -118,7 +118,7 @@ object Connection {
    * to `Connected`.
    */
   def pendingInit[F[_]: Logger](
-    odbService: OdbService[F],
+    odbService: GraphQLService[F],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
@@ -162,7 +162,7 @@ object Connection {
    * until explicitly terminated by the client.
    */
   def connected[F[_]: Logger](
-    odbService:    OdbService[F],
+    odbService:    GraphQLService[F],
     usr:           Option[User],
     send:          Option[FromServer] => F[Unit],
     subscriptions: Subscriptions[F]
@@ -264,7 +264,7 @@ object Connection {
 
 
   def apply[F[_]: Logger](
-    odbService: OdbService[F],
+    odbService: GraphQLService[F],
     userClient: SsoClient[F, User],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Async[F]): F[Connection[F]] =
