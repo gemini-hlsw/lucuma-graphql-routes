@@ -3,7 +3,6 @@
 
 package lucuma.odb.api.service
 
-import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 
 import cats.Monad
@@ -75,13 +74,14 @@ object Subscriptions {
   }
 
   // Converts raw graphQL subscription events into FromServer messages.
-  private def fromServerPipe[F[_]](id: String): Pipe[F, Either[Throwable, Json], FromServer] =
+  private def fromServerPipe[F[_]](id: String, service: GraphQLService[F]): Pipe[F, Either[Throwable, Json], FromServer] =
     _.map {
-      case Left(err)   => Error(id, err.format)
+      case Left(err)   => Error(id, service.format(err))
       case Right(json) => json.toStreamingMessage(id)
     }
 
   def apply[F[_]: Logger: Async](
+    service: GraphQLService[F],
     user: Option[User],
     send: Option[FromServer] => F[Unit]
   ): F[Subscriptions[F]] =
@@ -90,7 +90,7 @@ object Subscriptions {
       new Subscriptions[F]() {
 
         def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
-          events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))
+          events => fromServerPipe(id, service)(events).evalMap(m => send(Some(m)))
 
         override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
           for {

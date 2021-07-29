@@ -3,7 +3,6 @@
 
 package lucuma.odb.api.service
 
-import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
 
@@ -24,11 +23,7 @@ import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.{Close, Text}
 import org.http4s.{Header, Headers, HttpRoutes, InvalidMessageBodyFailure, ParseFailure, QueryParamDecoder, Request, Response}
 import org.typelevel.ci.CIString
-import sangria.ast.Document
-import sangria.parser.QueryParser
-
 import scala.concurrent.duration._
-
 
 object Routes {
 
@@ -39,6 +34,8 @@ object Routes {
     service:    GraphQLService[F],
     userClient: SsoClient[F, User]
   ): HttpRoutes[F] = {
+
+    import service.{ Document, ParsedGraphQLRequest }
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
@@ -53,12 +50,12 @@ object Routes {
 
     def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
       result match {
-        case Left(err)   => BadRequest(err.format)
+        case Left(err)   => BadRequest(service.format(err))
         case Right(json) => Ok(json)
       }
 
     def parse(query: String): Either[Throwable, Document] =
-      QueryParser.parse(query).toEither
+      service.parse(query)
 
     def oneOffGet(
       query: String,
@@ -72,7 +69,7 @@ object Routes {
         vars   =>
           parse(query) match {
             case Left(error) =>
-              BadRequest(error.format)
+              BadRequest(service.format(error))
 
             case Right(ast)  =>
               for {

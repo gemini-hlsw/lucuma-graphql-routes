@@ -19,8 +19,6 @@ val lucumaSsoVersion            = "0.0.10"
 val log4catsVersion             = "2.1.1"
 val monocleVersion              = "3.0.0"
 val refinedVersion              = "0.9.27"
-val sangriaVersion              = "2.1.3"
-val sangriaCirceVersion         = "1.3.2"
 val singletonOpsVersion         = "0.5.2"
 
 val munitVersion                = "0.7.27"
@@ -68,8 +66,6 @@ lazy val core = project
       "dev.optics"                 %% "monocle-core"              % monocleVersion,
       "dev.optics"                 %% "monocle-state"             % monocleVersion,
       "dev.optics"                 %% "monocle-macro"             % monocleVersion,
-      "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
-      "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
       "edu.gemini"                 %% "lucuma-core"               % lucumaCoreVersion,
       "edu.gemini"                 %% "lucuma-sso-backend-client" % lucumaSsoVersion,
@@ -92,8 +88,6 @@ lazy val core = project
       "eu.timepit"                 %% "refined"                   % refinedVersion,
       "eu.timepit"                 %% "refined-cats"              % refinedVersion,
       "dev.optics"                 %% "monocle-core"              % monocleVersion,
-      "org.sangria-graphql"        %% "sangria"                   % sangriaVersion,
-      "org.sangria-graphql"        %% "sangria-circe"             % sangriaCirceVersion,
       "edu.gemini"                 %% "clue-model"                % clueVersion,
       "edu.gemini"                 %% "lucuma-core"               % lucumaCoreVersion,
       "org.tpolecat"               %% "atto-core"                 % attoVersion,
@@ -114,8 +108,6 @@ lazy val core = project
       "org.http4s"                 %% "http4s-blaze-client"       % http4sVersion,
       "org.http4s"                 %% "http4s-circe"              % http4sVersion,
       "org.http4s"                 %% "http4s-dsl"                % http4sVersion,
-
-
       "edu.gemini"                 %% "lucuma-core-testkit"       % lucumaCoreVersion      % Test,
       "io.chrisdavenport"          %% "cats-scalacheck"           % catsScalacheckVersion  % Test,
       "org.scalameta"              %% "munit"                     % munitVersion           % Test,

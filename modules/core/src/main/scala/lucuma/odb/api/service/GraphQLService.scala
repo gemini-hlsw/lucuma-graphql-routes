@@ -9,8 +9,27 @@ import lucuma.core.model.User
 
 trait GraphQLService[F[_]] {
 
+  type Document
+
+  case class ParsedGraphQLRequest(
+    query: Document,
+    op:    Option[String],
+    vars:  Option[Json]
+  ) {
+
+    def isSubscription: Boolean =
+      GraphQLService.this.isSubscription(query)
+
+  }
+
+  def parse(query: String): Either[Throwable, Document]
+
+  def isSubscription(doc: Document): Boolean
+
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
 
   def subscribe(user: Option[User], request: ParsedGraphQLRequest): F[Stream[F, Either[Throwable, Json]]]
+
+  def format(err: Throwable): Json
 
 }

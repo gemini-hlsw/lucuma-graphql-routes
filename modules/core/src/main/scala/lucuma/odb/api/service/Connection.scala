@@ -3,7 +3,6 @@
 
 package lucuma.odb.api.service
 
-import lucuma.odb.api.service.ErrorFormatter.syntax._
 import lucuma.core.model.User
 import lucuma.sso.client.SsoClient
 import cats.MonadError
@@ -20,7 +19,6 @@ import clue.model.StreamingMessage.FromServer._
 import io.circe.Json
 import org.typelevel.log4cats.Logger
 import org.http4s.headers.Authorization
-import sangria.parser.QueryParser
 
 /**
  * A web-socket connection that receives messages from a client and processes
@@ -170,6 +168,8 @@ object Connection {
 
     new ConnectionState[F] {
 
+      import odbService.ParsedGraphQLRequest
+
       override def reset(
         u: Option[User],
         r: Option[FromServer] => F[Unit],
@@ -187,13 +187,12 @@ object Connection {
       override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
 
         val parseResult =
-          QueryParser
+          odbService
             .parse(raw.query)
-            .toEither
             .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
 
         val action = parseResult match {
-          case Left(err)                        => send(Some(Error(id, err.format)))
+          case Left(err)                        => send(Some(Error(id, odbService.format(err))))
           case Right(req) if req.isSubscription => subscribe(id, req)
           case Right(req)                       => execute(id, req)
         }
@@ -218,7 +217,7 @@ object Connection {
         for {
           r <- odbService.query(request)
           _ <- r.fold(
-                 err  => send(Some(Error(id, err.format))),
+                 err  => send(Some(Error(id, odbService.format(err)))),
                  json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
                )
         } yield ()
@@ -317,7 +316,7 @@ object Connection {
             a <- parseConnectionProps(connectionProps)
             u <- a.fold(F.pure(Option.empty[User]))(userClient.get)
             r  = reply(u)
-            s <- Subscriptions(u, r)
+            s <- Subscriptions(odbService, u, r)
             _ <- handle(_.reset(u, r, s))
           } yield ()
 
