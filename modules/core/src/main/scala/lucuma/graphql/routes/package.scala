@@ -3,12 +3,10 @@
 
 package lucuma.graphql
 
-import lucuma.core.model.User
-import lucuma.graphql.routes.syntax.logger._
-
 import cats.FlatMap
 import cats.syntax.all._
-
+import lucuma.core.model.User
+import lucuma.graphql.routes.syntax.logger._
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.extras.LogLevel
 

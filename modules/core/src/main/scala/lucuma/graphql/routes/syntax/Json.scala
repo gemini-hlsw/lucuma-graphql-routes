@@ -4,7 +4,9 @@
 package lucuma.graphql.routes.syntax
 
 import clue.model.StreamingMessage.FromServer
-import clue.model.StreamingMessage.FromServer.{Data, DataWrapper, Error}
+import clue.model.StreamingMessage.FromServer.Data
+import clue.model.StreamingMessage.FromServer.DataWrapper
+import clue.model.StreamingMessage.FromServer.Error
 import io.circe.Json
 
 final class JsonOps(val self: Json) extends AnyVal {
