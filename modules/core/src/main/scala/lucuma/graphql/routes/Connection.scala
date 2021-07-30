@@ -3,45 +3,38 @@
 
 package lucuma.graphql.routes
 
-import lucuma.core.model.User
-import lucuma.sso.client.SsoClient
 import cats.MonadError
-import cats.effect.{Async, Ref}
+import cats.effect.Async
+import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.traverse._
 import clue.model.GraphQLRequest
-import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
+import clue.model.StreamingMessage._
 import io.circe.Json
-import org.typelevel.log4cats.Logger
+import lucuma.core.model.User
+import lucuma.sso.client.SsoClient
 import org.http4s.headers.Authorization
+import org.typelevel.log4cats.Logger
 
-/**
- * A web-socket connection that receives messages from a client and processes
- * them.
- */
+/** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
 
-  /**
-   * User associated with the connection, if known.
-   */
+  /** User associated with the connection, if known. */
   def user: F[Option[User]]
 
   /**
-   * Accept a message from the client and process it, possibly changing state
-   * and sending messages in return.
-   *
+   * Accept a message from the client and process it, possibly changing state and sending messages
+   * in return.
    * @param m client provided message
    */
   def receive(m: FromClient): F[Unit]
 
-  /**
-   * Close the connection, never to be heard from again.
-   */
+  /** Close the connection, never to be heard from again. */
   def close: F[Unit]
 
 }
@@ -51,26 +44,22 @@ object Connection {
   import syntax.json._
 
   /**
-   * Connection is a state machine that (typically) transitions from states
-   * `PendingInit` to `Connected` to `Terminated` as it receives messages from
-   * the client.
+   * Connection is a state machine that (typically) transitions from states `PendingInit` to
+   * `Connected` to `Terminated` as it receives messages from the client.
    */
   sealed trait ConnectionState[F[_]] {
 
     /**
-     * The user associated with the connection, if known.  This should be
-     * provided in the `connection_init` payload under the `Authorization` key.
+     * The user associated with the connection, if known.  This should be provided in the
+     * `connection_init` payload under the `Authorization` key.
      */
     def user: Option[User]
 
     /**
-     * Initialize the connection with the given user, send reply function, and
-     * subscriptions.
-     *
+     * Initialize the connection with the given user, send reply function, and subscriptions.
      * @param user user associated with the connection, if known
      * @param send function to call in order to send a reply to the client
      * @param subs subscriptions being managed for this connection
-     *
      * @return state transition and action to execute
      */
     def reset(
@@ -81,29 +70,24 @@ object Connection {
 
     /**
      * Starts a Graph QL operation associated with a particular id.
-     *
      * @return state transition and action to execute
      */
     def start(id:  String, req: GraphQLRequest): (ConnectionState[F], F[Unit])
 
     /**
      * Terminates a Graph QL subscription associated with a particular id
-     *
      * @return state transition and action to execute
      */
     def stop(id: String): (ConnectionState[F], F[Unit])
 
     /**
      * Stops all the subscriptions.
-     *
      * @return state transition and action to execute
      */
     def stopAll: (ConnectionState[F], F[Unit])
 
     /**
-     * Closes the connection, signaling that nothing more will be sent via
-     * the reply queue.
-     *
+     * Closes the connection, signaling that nothing more will be sent via the reply queue.
      * @return state transition and action
      */
     def close: (ConnectionState[F], F[Unit])
@@ -111,12 +95,11 @@ object Connection {
   }
 
   /**
-   * PendingInit state.  Initial state, awaiting `connection_init` message that
-   * contains the user authorization header.  Once it receives it, we transition
-   * to `Connected`.
+   * PendingInit state. Initial state, awaiting `connection_init` message that contains the user
+   * authorization header. Once it receives it, we transition to `Connected`.
    */
   def pendingInit[F[_]: Logger](
-    odbService: GraphQLService[F],
+    service: GraphQLService[F],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
@@ -129,7 +112,7 @@ object Connection {
         send: Option[FromServer] => F[Unit],
         subs: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        (connected(odbService, user, send, subs),
+        (connected(service, user, send, subs),
          send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
         )
 
@@ -156,11 +139,11 @@ object Connection {
     }
 
   /**
-   * Connected state. Post-initialization, we stay in the `Connected` state
-   * until explicitly terminated by the client.
+   * Connected state. Post-initialization, we stay in the `Connected` state until explicitly
+   * terminated by the client.
    */
   def connected[F[_]: Logger](
-    odbService:    GraphQLService[F],
+    service:    GraphQLService[F],
     usr:           Option[User],
     send:          Option[FromServer] => F[Unit],
     subscriptions: Subscriptions[F]
@@ -168,14 +151,14 @@ object Connection {
 
     new ConnectionState[F] {
 
-      import odbService.ParsedGraphQLRequest
+      import service.ParsedGraphQLRequest
 
       override def reset(
         u: Option[User],
         r: Option[FromServer] => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        (connected(odbService, u, r, s),
+        (connected(service, u, r, s),
           subscriptions.removeAll  *>
             r(Some(ConnectionAck)) *>
             r(Some(ConnectionKeepAlive))
@@ -187,12 +170,12 @@ object Connection {
       override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
 
         val parseResult =
-          odbService
+          service
             .parse(raw.query)
             .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
 
         val action = parseResult match {
-          case Left(err)                        => send(Some(Error(id, odbService.format(err))))
+          case Left(err)                        => send(Some(Error(id, service.format(err))))
           case Right(req) if req.isSubscription => subscribe(id, req)
           case Right(req)                       => execute(id, req)
         }
@@ -209,15 +192,15 @@ object Connection {
 
       def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
         for {
-          s <- odbService.subscribe(user, request)
+          s <- service.subscribe(user, request)
           _ <- subscriptions.add(id, s)
         } yield ()
 
       def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
         for {
-          r <- odbService.query(request)
+          r <- service.query(request)
           _ <- r.fold(
-                 err  => send(Some(Error(id, odbService.format(err)))),
+                 err  => send(Some(Error(id, service.format(err)))),
                  json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
                )
         } yield ()
@@ -226,9 +209,7 @@ object Connection {
         (closed(user), subscriptions.removeAll *> send(None))
     }
 
-  /**
-   * Closed state.  All requests raise an error, the connection having been closed.
-   */
+  /** Closed state.  All requests raise an error, the connection having been closed. */
   def closed[F[_]](
     usr: Option[User]
   )(implicit M: MonadError[F, Throwable]): ConnectionState[F] =
@@ -263,12 +244,12 @@ object Connection {
 
 
   def apply[F[_]: Logger](
-    odbService: GraphQLService[F],
+    service: GraphQLService[F],
     userClient: SsoClient[F, User],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Async[F]): F[Connection[F]] =
 
-    Ref.of(pendingInit[F](odbService, replyQueue)).map { stateRef =>
+    Ref.of(pendingInit[F](service, replyQueue)).map { stateRef =>
 
       new Connection[F] {
 
@@ -291,20 +272,17 @@ object Connection {
             }
 
         /**
-         * Connection initialization upon receipt of a `connection_init`
-         * message.  These actions are done outside of any particular state
-         * because they require executing effects in addition to the state
-         * transition itself.  Namely: user lookup based on authentication
-         * data in the `connection_init` payload and the creation of the
-         * Subscriptions object with its `Ref` for tracking subscriptions.
-         *
-         * @param connectionProps properties extracted from the `connection_init`
-         *                        payload
+         * Connection initialization upon receipt of a `connection_init` message.  These actions are
+         * done outside of any particular state because they require executing effects in addition
+         * to the state transition itself.  Namely: user lookup based on authentication data in the
+         * `connection_init` payload and the creation of the Subscriptions object with its `Ref` for
+         * tracking subscriptions.
+         * @param connectionProps properties extracted from the `connection_init` payload
          */
         def init(connectionProps: Map[String, Json]): F[Unit] = {
 
-          // Creates the function used to send replies to the client.  It
-          // just offers a message to the reply queue and logs it.
+          // Creates the function used to send replies to the client. It just offers a message to
+          // the reply queue and logs it.
           def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
@@ -316,7 +294,7 @@ object Connection {
             a <- parseConnectionProps(connectionProps)
             u <- a.fold(F.pure(Option.empty[User]))(userClient.get)
             r  = reply(u)
-            s <- Subscriptions(odbService, u, r)
+            s <- Subscriptions(service, u, r)
             _ <- handle(_.reset(u, r, s))
           } yield ()
 

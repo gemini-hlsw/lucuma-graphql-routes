@@ -3,43 +3,38 @@
 
 package lucuma.graphql.routes
 
-import lucuma.core.model.User
-
 import cats.Monad
-import cats.effect.{Async, Fiber, Ref}
+import cats.effect.Async
+import cats.effect.Fiber
+import cats.effect.Ref
 import cats.implicits._
-import clue.model.StreamingMessage._
 import clue.model.StreamingMessage.FromServer._
-import fs2.{Pipe, Stream}
+import clue.model.StreamingMessage._
+import fs2.Pipe
+import fs2.Stream
 import fs2.concurrent.SignallingRef
-import org.typelevel.log4cats.Logger
 import io.circe.Json
+import lucuma.core.model.User
+import org.typelevel.log4cats.Logger
 
 
-/**
- * A GraphQL subscription in effect type F.
- */
+/** A GraphQL subscription in effect type F. */
 trait Subscriptions[F[_]] {
 
   /**
    * Adds a new subscription receiving events from the provided `Stream`.
-   *
    * @param id     client-provided id for the subscription
-   * @param events stream of Either errors or Json results that match the
-   *               subscription query
+   * @param events stream of Either errors or Json results that match the subscription query
    */
   def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit]
 
   /**
    * Removes a subscription so that it no longer provides events to the client.
-   *
    * @param id client-provided id
    */
   def remove(id: String): F[Unit]
 
-  /**
-   * Removes all subscriptions.
-   */
+  /** Removes all subscriptions. */
   def removeAll: F[Unit]
 
 }
@@ -50,11 +45,9 @@ object Subscriptions {
 
   /**
    * Tracks a single client subscription.
-   *
    * @param id      Client-supplied identification for the subscription.
-   *
-   * @param results Underlying stream of results, each of which is an Either
-   *                error or subscription query match
+   * @param results Underlying stream of results, each of which is an Either error or subscription
+   *  query match
    */
   private final class Subscription[F[_]: Monad](
     val id:      String,

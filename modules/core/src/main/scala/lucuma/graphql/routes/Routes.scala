@@ -3,26 +3,34 @@
 
 package lucuma.graphql.routes
 
-import lucuma.core.model.User
-import lucuma.sso.client.SsoClient
-
 import cats.data.ValidatedNel
 import cats.effect.Async
 import cats.effect.std.Queue
 import cats.implicits._
-import clue.model.StreamingMessage.{FromClient, FromServer}
+import clue.model.StreamingMessage.FromClient
+import clue.model.StreamingMessage.FromServer
 import clue.model.json._
 import fs2.Stream
-import org.typelevel.log4cats.Logger
 import io.circe._
 import io.circe.syntax._
+import lucuma.core.model.User
+import lucuma.sso.client.SsoClient
+import org.http4s.Header
+import org.http4s.Headers
+import org.http4s.HttpRoutes
+import org.http4s.InvalidMessageBodyFailure
+import org.http4s.ParseFailure
+import org.http4s.QueryParamDecoder
+import org.http4s.Request
+import org.http4s.Response
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
 import org.http4s.server.websocket.WebSocketBuilder
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.websocket.WebSocketFrame.{Close, Text}
-import org.http4s.{Header, Headers, HttpRoutes, InvalidMessageBodyFailure, ParseFailure, QueryParamDecoder, Request, Response}
+import org.http4s.websocket.WebSocketFrame.Close
+import org.http4s.websocket.WebSocketFrame.Text
 import org.typelevel.ci.CIString
+import org.typelevel.log4cats.Logger
 import scala.concurrent.duration._
 
 object Routes {
@@ -32,7 +40,7 @@ object Routes {
 
   def forService[F[_]: Logger: Async](
     service:    GraphQLService[F],
-    userClient: SsoClient[F, User]
+    userClient: SsoClient[F, User],
   ): HttpRoutes[F] = {
 
     import service.{ Document, ParsedGraphQLRequest }
