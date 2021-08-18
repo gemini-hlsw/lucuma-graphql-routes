@@ -14,7 +14,6 @@ import fs2.Pipe
 import fs2.Stream
 import fs2.concurrent.SignallingRef
 import io.circe.Json
-import lucuma.core.model.User
 import org.typelevel.log4cats.Logger
 
 
@@ -75,7 +74,6 @@ object Subscriptions {
 
   def apply[F[_]: Logger: Async](
     service: GraphQLService[F],
-    user: Option[User],
     send: Option[FromServer] => F[Unit]
   ): F[Subscriptions[F]] =
 
@@ -88,7 +86,7 @@ object Subscriptions {
         override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
           for {
             r <- SignallingRef(false)
-            in = r.discrete.evalTap(v => info(user, s"signalling ref = $v"))
+            in = r.discrete.evalTap(v => info(s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
             f <- Async[F].start(es.compile.drain)
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))

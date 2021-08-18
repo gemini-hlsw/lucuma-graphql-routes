@@ -4,7 +4,6 @@ val grackleVersion              = "0.1.1+0-13e5d4af+20210817-1128-SNAPSHOT"
 val http4sVersion               = "0.23.0-RC1"
 val kindProjectorVersion        = "0.13.0"
 val log4catsVersion             = "2.1.1"
-val lucumaSsoVersion            = "0.0.10"
 val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "2.1.3"
 
@@ -21,8 +20,9 @@ lazy val core = project
     name := "lucuma-graphql-routes-core",
     libraryDependencies ++= Seq(
       "edu.gemini"    %% "clue-model"                % clueVersion,
-      "edu.gemini"    %% "lucuma-sso-backend-client" % lucumaSsoVersion,
       "org.http4s"    %% "http4s-server"             % http4sVersion,
+      "org.http4s"    %% "http4s-dsl"                % http4sVersion,
+      "org.http4s"    %% "http4s-circe"              % http4sVersion,
       "org.typelevel" %% "log4cats-slf4j"            % log4catsVersion,
     ),
   )

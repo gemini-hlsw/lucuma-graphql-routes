@@ -16,16 +16,11 @@ import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
 import io.circe.Json
-import lucuma.core.model.User
-import lucuma.sso.client.SsoClient
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
-
-  /** User associated with the connection, if known. */
-  def user: F[Option[User]]
 
   /**
    * Accept a message from the client and process it, possibly changing state and sending messages
@@ -50,12 +45,6 @@ object Connection {
   sealed trait ConnectionState[F[_]] {
 
     /**
-     * The user associated with the connection, if known.  This should be provided in the
-     * `connection_init` payload under the `Authorization` key.
-     */
-    def user: Option[User]
-
-    /**
      * Initialize the connection with the given user, send reply function, and subscriptions.
      * @param user user associated with the connection, if known
      * @param send function to call in order to send a reply to the client
@@ -63,7 +52,6 @@ object Connection {
      * @return state transition and action to execute
      */
     def reset(
-      user: Option[User],
       send: Option[FromServer] => F[Unit],
       subs: Subscriptions[F]
     ): (ConnectionState[F], F[Unit])
@@ -104,22 +92,19 @@ object Connection {
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
     new ConnectionState[F] {
-      override def user: Option[User] =
-        None
 
       override def reset(
-        user: Option[User],
         send: Option[FromServer] => F[Unit],
         subs: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        (connected(service, user, send, subs),
+        (connected(service, send, subs),
          send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
         )
 
       private def doClose(m: String): (ConnectionState[F], F[Unit]) =
-        (closed(None),
+        (closed,
          for {
-           _ <- info(None, s"Request received on un-initialized connection: $m. Closing.")
+           _ <- info(s"Request received on un-initialized connection: $m. Closing.")
            _ <- replyQueue.offer(None)
          } yield ()
         )
@@ -144,7 +129,6 @@ object Connection {
    */
   def connected[F[_]: Logger](
     service:    GraphQLService[F],
-    usr:           Option[User],
     send:          Option[FromServer] => F[Unit],
     subscriptions: Subscriptions[F]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
@@ -154,18 +138,14 @@ object Connection {
       import service.ParsedGraphQLRequest
 
       override def reset(
-        u: Option[User],
         r: Option[FromServer] => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        (connected(service, u, r, s),
+        (connected(service, r, s),
           subscriptions.removeAll  *>
             r(Some(ConnectionAck)) *>
             r(Some(ConnectionKeepAlive))
         )
-
-      override def user: Option[User] =
-        usr
 
       override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
 
@@ -202,24 +182,18 @@ object Connection {
         } yield ()
 
       override val close: (ConnectionState[F], F[Unit]) =
-        (closed(user), subscriptions.removeAll *> send(None))
+        (closed, subscriptions.removeAll *> send(None))
     }
 
   /** Closed state.  All requests raise an error, the connection having been closed. */
-  def closed[F[_]](
-    usr: Option[User]
-  )(implicit M: MonadError[F, Throwable]): ConnectionState[F] =
+  def closed[F[_]](implicit M: MonadError[F, Throwable]): ConnectionState[F] =
 
     new ConnectionState[F] {
 
-      override def user: Option[User] =
-        usr
-
       private val raiseError: (ConnectionState[F], F[Unit]) =
-        (this, M.raiseError(new RuntimeException(s"Connection was terminated: (user=$user)")))
+        (this, M.raiseError(new RuntimeException("Connection was terminated.")))
 
       override def reset(
-        u: Option[User],
         r: Option[FromServer] => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
@@ -241,16 +215,12 @@ object Connection {
 
   def apply[F[_]: Logger](
     service: GraphQLService[F],
-    userClient: SsoClient[F, User],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Async[F]): F[Connection[F]] =
 
     Ref.of(pendingInit[F](service, replyQueue)).map { stateRef =>
 
       new Connection[F] {
-
-        override def user: F[Option[User]] =
-          stateRef.get.map(_.user)
 
         def handle(f: ConnectionState[F] => (ConnectionState[F], F[Unit])): F[Unit] =
           stateRef.modify(f).flatten
@@ -279,19 +249,18 @@ object Connection {
 
           // Creates the function used to send replies to the client. It just offers a message to
           // the reply queue and logs it.
-          def reply(user: Option[User]): Option[FromServer] => F[Unit] = { m =>
+          def reply: Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
-              _ <- info(user, s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+              _ <- info(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
           for {
             a <- parseConnectionProps(connectionProps)
-            u <- a.fold(F.pure(Option.empty[User]))(userClient.get)
-            r  = reply(u)
-            s <- Subscriptions(service, u, r)
-            _ <- handle(_.reset(u, r, s))
+            r  = reply
+            s <- Subscriptions(service, r)
+            _ <- handle(_.reset(r, s))
           } yield ()
 
         }

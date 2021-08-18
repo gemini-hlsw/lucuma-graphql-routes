@@ -13,8 +13,6 @@ import clue.model.json._
 import fs2.Stream
 import io.circe._
 import io.circe.syntax._
-import lucuma.core.model.User
-import lucuma.sso.client.SsoClient
 import org.http4s.Header
 import org.http4s.Headers
 import org.http4s.HttpRoutes
@@ -40,7 +38,6 @@ object Routes {
 
   def forService[F[_]: Logger: Async](
     service:     GraphQLService[F],
-    userClient:  SsoClient[F, User],
     graphQLPath: String = "graphql",
     wsPath:      String = "ws",
   ): HttpRoutes[F] = {
@@ -108,13 +105,13 @@ object Routes {
           .constant[F, FromServer](FromServer.ConnectionKeepAlive)
           .metered(KeepAliveDuration)
 
-      def logFromServer(user: F[Option[User]], msg: FromServer): F[Unit] =
+      def logFromServer(msg: FromServer): F[Unit] =
         msg match {
-          case FromServer.ConnectionKeepAlive => debug(user, s"Sending ConnectionKeepAlive")
-          case _                              => info(user, s"Sending to client: ${trimmedMessage(msg)}")
+          case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
+          case _                              => info(s"Sending to client: ${trimmedMessage(msg)}")
         }
 
-      def logWebSocketFrame(user: F[Option[User]], f: WebSocketFrame): F[Unit] = {
+      def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
 
         // The connection_init message payload has authorization information
         // which should not be logged.
@@ -122,8 +119,8 @@ object Routes {
         val RedactedAuth = """$1 <REDACTED>"""
 
         f match {
-          case Text(s, last) => info(user, s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-          case _             => info(user, s"Received message from client: $f")
+          case Text(s, last) => info(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+          case _             => info(s"Received message from client: $f")
         }
       }
 
@@ -134,7 +131,7 @@ object Routes {
 
       for {
         replyQueue <- Queue.unbounded[F, Option[FromServer]]
-        connection <- Connection(service, userClient, replyQueue)
+        connection <- Connection(service, replyQueue)
         response   <- WebSocketBuilder[F].copy(
             headers = Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-ws"))
           ).build(
@@ -143,11 +140,11 @@ object Routes {
             Stream
               .fromQueueNoneTerminated(replyQueue)
               .mergeHaltL(keepAliveStream)
-              .evalTap(logFromServer(connection.user, _))
+              .evalTap(logFromServer)
               .map(m => Text(m.asJson.spaces2)),
 
             // Input from client
-            _.evalTap(logWebSocketFrame(connection.user, _))
+            _.evalTap(logWebSocketFrame)
              .evalMap {
                case Text(s, _) =>
                  scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
@@ -168,23 +165,23 @@ object Routes {
     HttpRoutes.of[F] {
 
       // GraphQL query is embedded in the URI query string when queried via GET
-      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+      case GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
-          _ <- info(userClient.find(req), s"GET one off: query=$query, op=$op, vars=$vars")
+          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / `graphQLPath` =>
         for {
-          _ <- info(userClient.find(req), s"POST one off: request=$req")
+          _ <- info(s"POST one off: request=$req")
           r <- oneOffPost(req)
         } yield r
 
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
         for {
-          _ <- info(None, s"GET web socket: $req")
+          _ <- info(s"GET web socket: $req")
           r <- webSocketConnection
         } yield r
 
