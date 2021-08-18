@@ -4,9 +4,10 @@
 package lucuma.graphql.routes
 
 import cats.Monad
-import cats.effect.Async
+import cats.effect.Concurrent
 import cats.effect.Fiber
 import cats.effect.Ref
+import cats.effect.syntax.all._
 import cats.implicits._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
@@ -72,7 +73,7 @@ object Subscriptions {
       case Right(json) => json.toStreamingMessage(id)
     }
 
-  def apply[F[_]: Logger: Async](
+  def apply[F[_]: Logger: Concurrent](
     service: GraphQLService[F],
     send: Option[FromServer] => F[Unit]
   ): F[Subscriptions[F]] =
@@ -88,7 +89,7 @@ object Subscriptions {
             r <- SignallingRef(false)
             in = r.discrete.evalTap(v => info(s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
-            f <- Async[F].start(es.compile.drain)
+            f <- es.compile.drain.start
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))
           } yield ()
 

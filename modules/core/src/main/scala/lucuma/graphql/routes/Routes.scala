@@ -4,7 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.data.ValidatedNel
-import cats.effect.Async
+import cats.effect._
 import cats.effect.std.Queue
 import cats.implicits._
 import clue.model.StreamingMessage.FromClient
@@ -36,7 +36,7 @@ object Routes {
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]: Logger: Async](
+  def forService[F[_]: Logger: Temporal](
     service:     GraphQLService[F],
     graphQLPath: String = "graphql",
     wsPath:      String = "ws",
@@ -148,7 +148,7 @@ object Routes {
              .evalMap {
                case Text(s, _) =>
                  scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                   e => Async[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+                   e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
                    m => connection.receive(m)
                  )
 
@@ -156,7 +156,7 @@ object Routes {
                  connection.close
 
                case f          =>
-                 Async[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+                 Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
              }
           )
       } yield response

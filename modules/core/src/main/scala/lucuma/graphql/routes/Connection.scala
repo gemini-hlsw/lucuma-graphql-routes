@@ -4,7 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.MonadError
-import cats.effect.Async
+import cats.effect.Concurrent
 import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.syntax.apply._
@@ -216,7 +216,7 @@ object Connection {
   def apply[F[_]: Logger](
     service: GraphQLService[F],
     replyQueue: Queue[F, Option[FromServer]]
-  )(implicit F: Async[F]): F[Connection[F]] =
+  )(implicit F: Concurrent[F]): F[Connection[F]] =
 
     Ref.of(pendingInit[F](service, replyQueue)).map { stateRef =>
 
