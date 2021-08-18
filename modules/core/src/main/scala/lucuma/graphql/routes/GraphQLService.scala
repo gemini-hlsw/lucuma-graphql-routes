@@ -16,16 +16,16 @@ trait GraphQLService[F[_]] {
     op:    Option[String],
     vars:  Option[Json]
   ) {
-    def isSubscription: Boolean = GraphQLService.this.isSubscription(query)
+    def isSubscription: Boolean = GraphQLService.this.isSubscription(this)
   }
 
   def parse(query: String): Either[Throwable, Document]
 
-  def isSubscription(doc: Document): Boolean
+  protected def isSubscription(doc: ParsedGraphQLRequest): Boolean
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
 
-  def subscribe(user: Option[User], request: ParsedGraphQLRequest): F[Stream[F, Either[Throwable, Json]]]
+  def subscribe(user: Option[User], request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
 
   def format(err: Throwable): Json
 

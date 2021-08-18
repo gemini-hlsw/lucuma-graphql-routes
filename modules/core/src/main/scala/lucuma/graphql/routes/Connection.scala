@@ -191,10 +191,7 @@ object Connection {
         (this, subscriptions.removeAll)
 
       def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
-        for {
-          s <- service.subscribe(user, request)
-          _ <- subscriptions.add(id, s)
-        } yield ()
+        subscriptions.add(id, service.subscribe(user, request))
 
       def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
         for {
