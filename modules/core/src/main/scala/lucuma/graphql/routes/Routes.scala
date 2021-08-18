@@ -39,8 +39,10 @@ object Routes {
     5.seconds
 
   def forService[F[_]: Logger: Async](
-    service:    GraphQLService[F],
-    userClient: SsoClient[F, User],
+    service:     GraphQLService[F],
+    userClient:  SsoClient[F, User],
+    graphQLPath: String = "graphql",
+    wsPath:      String = "ws",
   ): HttpRoutes[F] = {
 
     import service.{ Document, ParsedGraphQLRequest }
@@ -163,25 +165,24 @@ object Routes {
       } yield response
     }
 
-
     HttpRoutes.of[F] {
 
       // GraphQL query is embedded in the URI query string when queried via GET
-      case req @ GET -> Root / "odb" :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
         for {
           _ <- info(userClient.find(req), s"GET one off: query=$query, op=$op, vars=$vars")
           r <- oneOffGet(query, op, vars)
         } yield r
 
       // GraphQL query is embedded in a Json request body when queried via POST
-      case req @ POST -> Root / "odb" =>
+      case req @ POST -> Root / `graphQLPath` =>
         for {
           _ <- info(userClient.find(req), s"POST one off: request=$req")
           r <- oneOffPost(req)
         } yield r
 
       // WebSocket connection request.
-      case req @ GET -> Root / "ws" =>
+      case req @ GET -> Root / `wsPath` =>
         for {
           _ <- info(None, s"GET web socket: $req")
           r <- webSocketConnection

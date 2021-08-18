@@ -17,7 +17,6 @@ import edu.gemini.grackle.UntypedOperation.UntypedSubscription
 import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
-import lucuma.core.model.User
 
 import scala.util.control.NonFatal
 
@@ -27,7 +26,7 @@ class GrackleGraphQLService[F[_]: MonadThrow](
 
   type Document = UntypedOperation
 
-  protected def isSubscription(req: ParsedGraphQLRequest): Boolean =
+  def isSubscription(req: ParsedGraphQLRequest): Boolean =
     req.query match {
       case UntypedSubscription(_, _) => true
       case _                         => false
@@ -37,12 +36,12 @@ class GrackleGraphQLService[F[_]: MonadThrow](
     QueryParser.parseText(query).toEither.leftMap(GrackleException(_))
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]] =
-    subscribe(None, request).compile.toList.map {
+    subscribe(request).compile.toList.map {
       case List(e) => e
       case other   => GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")).asLeft
     }
 
-  def subscribe(user: Option[User], request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
+  def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
     mapping.compiler.compile1(request.query, request.vars).toEither match {
       case Right(operation) =>
         mapping.interpreter.runRoot(operation.query, operation.rootTpe, Cursor.Env.empty).map {

@@ -175,9 +175,8 @@ object Connection {
             .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
 
         val action = parseResult match {
-          case Left(err)                        => send(Some(Error(id, service.format(err))))
-          case Right(req) if req.isSubscription => subscribe(id, req)
-          case Right(req)                       => execute(id, req)
+          case Left(err)  => send(Some(Error(id, service.format(err))))
+          case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
         }
 
         (this, action)
@@ -191,7 +190,7 @@ object Connection {
         (this, subscriptions.removeAll)
 
       def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
-        subscriptions.add(id, service.subscribe(user, request))
+        subscriptions.add(id, service.subscribe(request))
 
       def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
         for {

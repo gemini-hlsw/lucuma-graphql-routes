@@ -5,7 +5,6 @@ package lucuma.graphql.routes
 
 import fs2.Stream
 import io.circe._
-import lucuma.core.model.User
 
 trait GraphQLService[F[_]] {
 
@@ -15,17 +14,15 @@ trait GraphQLService[F[_]] {
     query: Document,
     op:    Option[String],
     vars:  Option[Json]
-  ) {
-    def isSubscription: Boolean = GraphQLService.this.isSubscription(this)
-  }
+  )
 
   def parse(query: String): Either[Throwable, Document]
 
-  protected def isSubscription(doc: ParsedGraphQLRequest): Boolean
+  def isSubscription(doc: ParsedGraphQLRequest): Boolean
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
 
-  def subscribe(user: Option[User], request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
+  def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
 
   def format(err: Throwable): Json
 

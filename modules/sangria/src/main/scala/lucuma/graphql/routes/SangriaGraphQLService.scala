@@ -8,8 +8,6 @@ import cats.effect.std.Dispatcher
 import cats.syntax.all._
 import fs2.Stream
 import io.circe._
-import lucuma.core.model.User
-import org.typelevel.log4cats.Logger
 import sangria.ast.OperationType
 import sangria.execution.ExceptionHandler
 import sangria.execution._
@@ -18,12 +16,13 @@ import sangria.parser.QueryParser
 import sangria.schema.Schema
 import sangria.streaming
 import sangria.streaming.SubscriptionStream
+
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.util.Failure
 import scala.util.Success
 import scala.util.control.NonFatal
 
-class SangriaGraphQLService[F[_]: Async: Logger, A](
+class SangriaGraphQLService[F[_]: Async, A](
   schema:           Schema[A, Unit],
   userData:         A,
   exceptionHandler: ExceptionHandler
@@ -53,12 +52,11 @@ class SangriaGraphQLService[F[_]: Async: Logger, A](
     }.attempt
 
   def subscribe(
-    user:    Option[User],
     request: ParsedGraphQLRequest
   ): Stream[F, Either[Throwable, Json]] = {
 
     implicit def subStream(implicit D: Dispatcher[F]): SubscriptionStream[Stream[F, *]] =
-      streaming.fs2.fs2SubscriptionStream[F](D, Async[F]/*, scala.concurrent.ExecutionContext.global*/)
+      streaming.fs2.fs2SubscriptionStream[F]
 
     import sangria.execution.ExecutionScheme.Stream
 
@@ -76,7 +74,6 @@ class SangriaGraphQLService[F[_]: Async: Logger, A](
             ).map { preparedQuery =>
               preparedQuery
                 .execute()
-                .evalTap(n => info(user, s"Subscription event: ${n.printWith(Printer.spaces2)}"))
                 .map(_.asRight[Throwable])
                 .recover { case NonFatal(error) => error.asLeft[Json] }
             }
