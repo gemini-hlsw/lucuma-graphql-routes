@@ -7,17 +7,27 @@ libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes-sangria" % <versio
 libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes-grackle" % <version> // Grackle
 ```
 
-First construct a `GraphQLService`.
+The `HttpRoutes` provided by this library will delegate GraphQL operation to a `GraphQLService` which is computed on a per-request basis. This allows the application to select a different schema based on credentials in the request, for example.
+
+So first, write a method that constructs a `GraphQLService` based on the incoming `Request`.
 
 ```scala
-val service = new SangriaGraphQLService[F](mySchema, userData, exceptionHandler) // Sangria
-val service = new GrackleGraphQLService[F](myMapping) // Grackle
+def mkService(req: Request[F]): F[Option[GraphQLService[F]]] =
+  // Yield None to deny access (403 Forbidden), or a GraphQLService if it's
+  // ok to service the request.
 ```
 
-Next, construct an `HttpRoutes` for the service.
+There are two constructors for `GraphQLService`, depending on the back end you're using.
 
 ```scala
-Routes.forService[F](service, ssoClient)
+new SangriaGraphQLService[F](mySchema, userData, exceptionHandler) // Sangria
+new GrackleGraphQLService[F](myMapping) // Grackle
+```
+
+Next construct the `HttpRoutes`, passing the method defined above.
+
+```scala
+Routes.forService(mkService) // HttpRoutes[F]
 ```
 
 The resulting `HttpRoutes` will serve the following endpoints:
@@ -25,8 +35,4 @@ The resulting `HttpRoutes` will serve the following endpoints:
 - `Root / "graphql"` using the [Serving over HTTP](https://graphql.org/learn/serving-over-http/) specification.
 - `Root / "ws"` using the [GraphQL over WebSocket Protocol](https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md) specification.
 
-You can customize the `"graphql"` and `"ws"` segments when you call `Routes.forService`.
-
-## Notes
-
-The `SSOClient` required by `Routes.forService` is only used for logging and will probably go away.
+The `"graphql"` and `"ws"` segments are defaults; you can specify different values when you call `Routes.forService`.
