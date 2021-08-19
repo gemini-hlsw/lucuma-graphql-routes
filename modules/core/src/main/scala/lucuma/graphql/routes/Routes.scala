@@ -37,12 +37,10 @@ object Routes {
     5.seconds
 
   def forService[F[_]: Logger: Temporal](
-    service:     GraphQLService[F],
+    service:     Request[F] => F[Option[GraphQLService[F]]],
     graphQLPath: String = "graphql",
     wsPath:      String = "ws",
   ): HttpRoutes[F] = {
-
-    import service.{ Document, ParsedGraphQLRequest }
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
@@ -55,13 +53,57 @@ object Routes {
     object OperationNameMatcher extends OptionalQueryParamDecoderMatcher[String]("operationName")
     object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[Json]("variables")
 
+    def handler(req: Request[F]): F[Option[RouteHandler[F]]] =
+      service(req).map(_.map(new RouteHandler(_)))
+
+    HttpRoutes.of[F] {
+
+      // GraphQL query is embedded in the URI query string when queried via GET
+      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+        info(s"GET one off: query=$query, op=$op, vars=$vars") *>
+        handler(req).flatMap {
+          case Some(h) => h.oneOffGet(query, op, vars)
+          case None    => Forbidden("Access denied.")
+        }
+
+      // GraphQL query is embedded in a Json request body when queried via POST
+      case req @ POST -> Root / `graphQLPath` =>
+        info(s"POST one off: request=$req") *>
+        handler(req).flatMap {
+          case Some(h) => h.oneOffPost(req)
+          case None    => Forbidden("Access denied.")
+        }
+
+      // WebSocket connection request.
+      case req @ GET -> Root / `wsPath` =>
+        info(s"GET web socket: $req") *>
+        handler(req).flatMap {
+          case Some(h) => h.webSocketConnection
+          case None    => Forbidden("Access denied.")
+        }
+
+    }
+  }
+
+}
+
+  class RouteHandler[F[_]: Logger: Temporal](service: GraphQLService[F]) {
+
+    val KeepAliveDuration: FiniteDuration =
+      5.seconds
+
+    import service.{ Document, ParsedGraphQLRequest }
+
+    val dsl = new Http4sDsl[F]{}
+    import dsl._
+
     def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
       result match {
         case Left(err)   => BadRequest(service.format(err))
         case Right(json) => Ok(json)
       }
 
-    def parse(query: String): Either[Throwable, Document] =
+    private def parse(query: String): Either[Throwable, Document] =
       service.parse(query)
 
     def oneOffGet(
@@ -162,30 +204,4 @@ object Routes {
       } yield response
     }
 
-    HttpRoutes.of[F] {
-
-      // GraphQL query is embedded in the URI query string when queried via GET
-      case GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
-        for {
-          _ <- info(s"GET one off: query=$query, op=$op, vars=$vars")
-          r <- oneOffGet(query, op, vars)
-        } yield r
-
-      // GraphQL query is embedded in a Json request body when queried via POST
-      case req @ POST -> Root / `graphQLPath` =>
-        for {
-          _ <- info(s"POST one off: request=$req")
-          r <- oneOffPost(req)
-        } yield r
-
-      // WebSocket connection request.
-      case req @ GET -> Root / `wsPath` =>
-        for {
-          _ <- info(s"GET web socket: $req")
-          r <- webSocketConnection
-        } yield r
-
-    }
   }
-
-}
