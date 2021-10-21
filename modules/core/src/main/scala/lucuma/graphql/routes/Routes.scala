@@ -31,6 +31,7 @@ import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import scala.concurrent.duration._
 import org.http4s.headers.Authorization
+import cats.data.Nested
 
 object Routes {
 
@@ -38,7 +39,7 @@ object Routes {
     5.seconds
 
   def forService[F[_]: Logger: Temporal](
-    service:     Authorization => F[Option[GraphQLService[F]]],
+    service:     Option[Authorization] => F[Option[GraphQLService[F]]],
     wsBuilder:   WebSocketBuilder2[F],
     graphQLPath: String = "graphql",
     wsPath:      String = "ws",
@@ -56,10 +57,7 @@ object Routes {
     object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[Json]("variables")
 
     def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
-      req.headers.get[Authorization] match {
-        case Some(a) => service(a).map(_.map(new HttpRouteHandler(_)))
-        case None    => Option.empty.pure[F]
-      }
+      Nested(service(req.headers.get[Authorization])).map(new HttpRouteHandler(_)).value
 
     HttpRoutes.of[F] {
 
@@ -141,7 +139,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
   }
 
-class WsRouteHandler[F[_]: Logger: Temporal](service: Authorization => F[Option[GraphQLService[F]]]) {
+class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
 
   val KeepAliveDuration: FiniteDuration =
     5.seconds
