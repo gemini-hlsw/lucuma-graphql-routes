@@ -8,6 +8,7 @@ val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "2.1.3"
 
 inThisBuild(Seq(
+  homepage := Some(url("https://github.com/gemini-hlsw")),
   addCompilerPlugin(("org.typelevel" % "kind-projector" % kindProjectorVersion).cross(CrossVersion.full)),
 ) ++ lucumaPublishSettings)
 
