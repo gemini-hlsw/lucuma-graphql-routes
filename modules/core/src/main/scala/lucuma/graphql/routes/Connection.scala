@@ -214,7 +214,7 @@ object Connection {
 
 
   def apply[F[_]: Logger](
-    service: Authorization => F[Option[GraphQLService[F]]],
+    service: Option[Authorization] => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Concurrent[F]): F[Connection[F]] =
 
@@ -252,31 +252,35 @@ object Connection {
             } yield ()
           }
 
-          parseAuthorization(connectionProps) match {
+          // Given an optional Authorization, get a service and start a subscription (if allowed)
+          def trySubscribe(opAuth: Option[Authorization]): F[Unit] =
+            service(opAuth).flatMap {
 
-            // Authorization header is present and well-formed.
-            case Some(Right(auth)) =>
-              service(auth).flatMap {
+              // User is authorized. Go.
+              case Some(svc) =>
+                Subscriptions(svc, reply).flatMap(s => handle(_.reset(svc, reply, s)))
 
-                // User is authorized. Go.
-                case Some(svc) =>
-                  Subscriptions(svc, reply).flatMap(s => handle(_.reset(svc, reply, s)))
-
-                // User has insufficient privileges to connect.
-                case None =>
-                  reply(Some(FromServer.Error("<none>", Json.fromString("Not authorized.")))) *>
-                  handle(_.close)
+              // User has insufficient privileges to connect.
+              case None =>
+                reply(Some(FromServer.Error("<none>", Json.fromString("Not authorized.")))) *>
+                handle(_.close)
 
             }
+
+          // Either subscribe or error out, based on the Authorization property (if any)
+          parseAuthorization(connectionProps) match {
+
+            // Authorization header is present and well-formed
+            case Some(Right(auth)) =>
+              trySubscribe(Some(auth))
+
+            // Authorization header is missing
+            case None =>
+              trySubscribe(None)
 
             // Authorization header is present but malformed.
             case Some(Left(_)) =>
               reply(Some(FromServer.Error("<none>", Json.fromString(s"Authorization property is malformed.")))) *>
-              handle(_.close)
-
-            // Authorization header is missing.
-            case None =>
-              reply(Some(FromServer.Error("<none>", Json.fromString("Authorization property is not present.")))) *>
               handle(_.close)
 
           }
