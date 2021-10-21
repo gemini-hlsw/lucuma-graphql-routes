@@ -23,13 +23,14 @@ import org.http4s.Request
 import org.http4s.Response
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
-import org.http4s.server.websocket.WebSocketBuilder
+import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Close
 import org.http4s.websocket.WebSocketFrame.Text
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import scala.concurrent.duration._
+import org.http4s.headers.Authorization
 
 object Routes {
 
@@ -37,7 +38,8 @@ object Routes {
     5.seconds
 
   def forService[F[_]: Logger: Temporal](
-    service:     Request[F] => F[Option[GraphQLService[F]]],
+    service:     Authorization => F[Option[GraphQLService[F]]],
+    wsBuilder:   WebSocketBuilder2[F],
     graphQLPath: String = "graphql",
     wsPath:      String = "ws",
   ): HttpRoutes[F] = {
@@ -53,8 +55,11 @@ object Routes {
     object OperationNameMatcher extends OptionalQueryParamDecoderMatcher[String]("operationName")
     object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[Json]("variables")
 
-    def handler(req: Request[F]): F[Option[RouteHandler[F]]] =
-      service(req).map(_.map(new RouteHandler(_)))
+    def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
+      req.headers.get[Authorization] match {
+        case Some(a) => service(a).map(_.map(new HttpRouteHandler(_)))
+        case None    => Option.empty.pure[F]
+      }
 
     HttpRoutes.of[F] {
 
@@ -77,131 +82,130 @@ object Routes {
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
         info(s"GET web socket: $req") *>
-        handler(req).flatMap {
-          case Some(h) => h.webSocketConnection
-          case None    => Forbidden("Access denied.")
-        }
+        new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
     }
   }
 
 }
 
-  class RouteHandler[F[_]: Logger: Temporal](service: GraphQLService[F]) {
+class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
-    val KeepAliveDuration: FiniteDuration =
-      5.seconds
+  import service.{ Document, ParsedGraphQLRequest }
 
-    import service.{ Document, ParsedGraphQLRequest }
+  val dsl = new Http4sDsl[F]{}
+  import dsl._
 
-    val dsl = new Http4sDsl[F]{}
-    import dsl._
-
-    def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
-      result match {
-        case Left(err)   => BadRequest(service.format(err))
-        case Right(json) => Ok(json)
-      }
-
-    private def parse(query: String): Either[Throwable, Document] =
-      service.parse(query)
-
-    def oneOffGet(
-      query: String,
-      op:    Option[String],
-      vars0: Option[ValidatedNel[ParseFailure, Json]]
-    ): F[Response[F]] =
-      vars0.sequence.fold(
-        errors =>
-          BadRequest(errors.map(_.sanitized).mkString_("", ",", "")),
-
-        vars   =>
-          parse(query) match {
-            case Left(error) =>
-              BadRequest(service.format(error))
-
-            case Right(ast)  =>
-              for {
-                result <- service.query(ParsedGraphQLRequest(ast, op, vars))
-                resp   <- toResponse(result)
-              } yield resp
-          }
-        )
-
-    def oneOffPost(req: Request[F]): F[Response[F]] =
-      for {
-        body   <- req.as[Json]
-        obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
-        query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
-        op     =  obj("operationName").flatMap(_.asString)
-        vars   =  obj("variables")
-        parsed = parse(query).map(ParsedGraphQLRequest(_, op, vars))
-        result <- parsed.traverse(service.query).map(_.flatten)
-        resp   <- toResponse(result)
-      } yield resp
-
-    val webSocketConnection: F[Response[F]] = {
-
-      val keepAliveStream: Stream[F, FromServer] =
-        Stream
-          .constant[F, FromServer](FromServer.ConnectionKeepAlive)
-          .metered(KeepAliveDuration)
-
-      def logFromServer(msg: FromServer): F[Unit] =
-        msg match {
-          case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
-          case _                              => info(s"Sending to client: ${trimmedMessage(msg)}")
-        }
-
-      def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
-
-        // The connection_init message payload has authorization information
-        // which should not be logged.
-        val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
-        val RedactedAuth = """$1 <REDACTED>"""
-
-        f match {
-          case Text(s, last) => info(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-          case _             => info(s"Received message from client: $f")
-        }
-      }
-
-      def trimmedMessage(m: FromServer): String = {
-        val s = m.asJson.spaces2
-        if (s.length > 516) s"${s.take(512)} ..." else s
-      }
-
-      for {
-        replyQueue <- Queue.unbounded[F, Option[FromServer]]
-        connection <- Connection(service, replyQueue)
-        response   <- WebSocketBuilder[F].copy(
-            headers = Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-ws"))
-          ).build(
-
-            // Replies to client
-            Stream
-              .fromQueueNoneTerminated(replyQueue)
-              .mergeHaltL(keepAliveStream)
-              .evalTap(logFromServer)
-              .map(m => Text(m.asJson.spaces2)),
-
-            // Input from client
-            _.evalTap(logWebSocketFrame)
-             .evalMap {
-               case Text(s, _) =>
-                 scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                   e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
-                   m => connection.receive(m)
-                 )
-
-               case Close(_)   =>
-                 connection.close
-
-               case f          =>
-                 Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
-             }
-          )
-      } yield response
+  def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
+    result match {
+      case Left(err)   => BadRequest(service.format(err))
+      case Right(json) => Ok(json)
     }
 
+  private def parse(query: String): Either[Throwable, Document] =
+    service.parse(query)
+
+  def oneOffGet(
+    query: String,
+    op:    Option[String],
+    vars0: Option[ValidatedNel[ParseFailure, Json]]
+  ): F[Response[F]] =
+    vars0.sequence.fold(
+      errors =>
+        BadRequest(errors.map(_.sanitized).mkString_("", ",", "")),
+
+      vars   =>
+        parse(query) match {
+          case Left(error) =>
+            BadRequest(service.format(error))
+
+          case Right(ast)  =>
+            for {
+              result <- service.query(ParsedGraphQLRequest(ast, op, vars))
+              resp   <- toResponse(result)
+            } yield resp
+        }
+      )
+
+  def oneOffPost(req: Request[F]): F[Response[F]] =
+    for {
+      body   <- req.as[Json]
+      obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
+      query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
+      op     =  obj("operationName").flatMap(_.asString)
+      vars   =  obj("variables")
+      parsed = parse(query).map(ParsedGraphQLRequest(_, op, vars))
+      result <- parsed.traverse(service.query).map(_.flatten)
+      resp   <- toResponse(result)
+    } yield resp
+
   }
+
+class WsRouteHandler[F[_]: Logger: Temporal](service: Authorization => F[Option[GraphQLService[F]]]) {
+
+  val KeepAliveDuration: FiniteDuration =
+    5.seconds
+
+  def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = {
+
+    val keepAliveStream: Stream[F, FromServer] =
+      Stream
+        .constant[F, FromServer](FromServer.ConnectionKeepAlive)
+        .metered(KeepAliveDuration)
+
+    def logFromServer(msg: FromServer): F[Unit] =
+      msg match {
+        case FromServer.ConnectionKeepAlive => info(s"Sending ConnectionKeepAlive")
+        case _                              => info(s"Sending to client: ${trimmedMessage(msg)}")
+      }
+
+    def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
+
+      // The connection_init message payload has authorization information
+      // which should not be logged.
+      val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
+      val RedactedAuth = """$1 <REDACTED>"""
+
+      f match {
+        case Text(s, last) => info(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+        case _             => info(s"Received message from client: $f")
+      }
+    }
+
+    def trimmedMessage(m: FromServer): String = {
+      val s = m.asJson.spaces2
+      if (s.length > 516) s"${s.take(512)} ..." else s
+    }
+
+    for {
+      replyQueue <- Queue.unbounded[F, Option[FromServer]]
+      connection <- Connection(service, replyQueue)
+      response   <- wsb.withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-ws"))).build(
+
+          // Replies to client
+          Stream
+            .fromQueueNoneTerminated(replyQueue)
+            .mergeHaltL(keepAliveStream)
+            .evalTap(logFromServer)
+            .map(m => Text(m.asJson.spaces2)),
+
+          // Input from client
+          _.evalTap(logWebSocketFrame)
+            .evalMap {
+              case Text(s, _) =>
+                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
+                  e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+                  m => connection.receive(m)
+                )
+
+              case Close(_)   =>
+                connection.close
+
+              case f          =>
+                Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+            }
+        )
+    } yield response
+  }
+
+}

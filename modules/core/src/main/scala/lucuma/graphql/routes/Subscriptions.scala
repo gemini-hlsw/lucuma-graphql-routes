@@ -89,7 +89,9 @@ object Subscriptions {
             r <- SignallingRef(false)
             in = r.discrete.evalTap(v => info(s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
+            _ <- debug(s"starting event stream $id")
             f <- es.compile.drain.start
+            _ <- debug(s"started event stream $id")
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))
           } yield ()
 

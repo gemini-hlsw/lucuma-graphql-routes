@@ -7,10 +7,7 @@ import cats.MonadError
 import cats.effect.Concurrent
 import cats.effect.Ref
 import cats.effect.std.Queue
-import cats.syntax.apply._
-import cats.syntax.flatMap._
-import cats.syntax.functor._
-import cats.syntax.traverse._
+import cats.syntax.all._
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
@@ -18,6 +15,7 @@ import clue.model.StreamingMessage._
 import io.circe.Json
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
+import org.http4s.ParseResult
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
@@ -45,13 +43,13 @@ object Connection {
   sealed trait ConnectionState[F[_]] {
 
     /**
-     * Initialize the connection with the given user, send reply function, and subscriptions.
-     * @param user user associated with the connection, if known
+     * Initialize the connection with the given send reply function and subscriptions.
      * @param send function to call in order to send a reply to the client
      * @param subs subscriptions being managed for this connection
      * @return state transition and action to execute
      */
     def reset(
+      service: GraphQLService[F],
       send: Option[FromServer] => F[Unit],
       subs: Subscriptions[F]
     ): (ConnectionState[F], F[Unit])
@@ -87,15 +85,15 @@ object Connection {
    * authorization header. Once it receives it, we transition to `Connected`.
    */
   def pendingInit[F[_]: Logger](
-    service: GraphQLService[F],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
     new ConnectionState[F] {
 
       override def reset(
+        service: GraphQLService[F],
         send: Option[FromServer] => F[Unit],
-        subs: Subscriptions[F]
+        subs: Subscriptions[F],
       ): (ConnectionState[F], F[Unit]) =
         (connected(service, send, subs),
          send(Some(ConnectionAck)) *> send(Some(ConnectionKeepAlive))
@@ -138,6 +136,7 @@ object Connection {
       import service.ParsedGraphQLRequest
 
       override def reset(
+        service: GraphQLService[F],
         r: Option[FromServer] => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
@@ -194,6 +193,7 @@ object Connection {
         (this, M.raiseError(new RuntimeException("Connection was terminated.")))
 
       override def reset(
+        service: GraphQLService[F],
         r: Option[FromServer] => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
@@ -214,28 +214,24 @@ object Connection {
 
 
   def apply[F[_]: Logger](
-    service: GraphQLService[F],
+    service: Authorization => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Concurrent[F]): F[Connection[F]] =
 
-    Ref.of(pendingInit[F](service, replyQueue)).map { stateRef =>
+    Ref.of(pendingInit[F](replyQueue)).map { stateRef =>
 
       new Connection[F] {
 
         def handle(f: ConnectionState[F] => (ConnectionState[F], F[Unit])): F[Unit] =
           stateRef.modify(f).flatten
 
-        def parseConnectionProps(
+        def parseAuthorization(
           connectionProps: Map[String, Json]
-        ): F[Option[Authorization]] =
+        ): Option[ParseResult[Authorization]] =
           connectionProps
             .get("Authorization")
             .flatMap(_.asString)
             .map(Authorization.parse)
-            .flatTraverse {
-              case Left(err) => F.raiseError[Option[Authorization]](new RuntimeException(err.message, err.cause.orNull))
-              case Right(a)  => F.pure(Some(a))
-            }
 
         /**
          * Connection initialization upon receipt of a `connection_init` message.  These actions are
@@ -249,28 +245,52 @@ object Connection {
 
           // Creates the function used to send replies to the client. It just offers a message to
           // the reply queue and logs it.
-          def reply: Option[FromServer] => F[Unit] = { m =>
+          val reply: Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
               _ <- info(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
-          for {
-            a <- parseConnectionProps(connectionProps)
-            r  = reply
-            s <- Subscriptions(service, r)
-            _ <- handle(_.reset(r, s))
-          } yield ()
+          parseAuthorization(connectionProps) match {
+
+            // Authorization header is present and well-formed.
+            case Some(Right(auth)) =>
+              service(auth).flatMap {
+
+                // User is authorized. Go.
+                case Some(svc) =>
+                  Subscriptions(svc, reply).flatMap(s => handle(_.reset(svc, reply, s)))
+
+                // User has insufficient privileges to connect.
+                case None =>
+                  reply(Some(FromServer.Error("<none>", Json.fromString("Not authorized.")))) *>
+                  handle(_.close)
+
+            }
+
+            // Authorization header is present but malformed.
+            case Some(Left(_)) =>
+              reply(Some(FromServer.Error("<none>", Json.fromString(s"Authorization property is malformed.")))) *>
+              handle(_.close)
+
+            // Authorization header is missing.
+            case None =>
+              reply(Some(FromServer.Error("<none>", Json.fromString("Authorization property is not present.")))) *>
+              handle(_.close)
+
+          }
 
         }
 
         override def receive(m: FromClient): F[Unit] =
-          m match {
-            case ConnectionInit(m)   => init(m)
-            case Start(id, request)  => handle(_.start(id, request))
-            case Stop(id)            => handle(_.stop(id))
-            case ConnectionTerminate => handle(_.stopAll)
+          Logger[F].info(s"received $m") *> {
+            m match {
+              case ConnectionInit(m)   => init(m)
+              case Start(id, request)  => handle(_.start(id, request))
+              case Stop(id)            => handle(_.stop(id))
+              case ConnectionTerminate => handle(_.stopAll)
+            }
           }
 
         override def close: F[Unit] =

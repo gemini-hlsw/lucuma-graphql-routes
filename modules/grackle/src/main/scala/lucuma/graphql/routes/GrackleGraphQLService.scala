@@ -42,7 +42,7 @@ class GrackleGraphQLService[F[_]: MonadThrow](
     }
 
   def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
-    mapping.compiler.compile1(request.query, request.vars).toEither match {
+    mapping.compiler.compileUntyped(request.query, request.vars).toEither match {
       case Right(operation) =>
         mapping.interpreter.runRoot(operation.query, operation.rootTpe, Cursor.Env.empty).map {
           case Ior.Left(errs) => Left(GrackleException(errs): Throwable)

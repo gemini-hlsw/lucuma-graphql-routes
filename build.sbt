@@ -1,8 +1,8 @@
-val clueVersion                 = "0.16.0"
+val clueVersion                 = "0.18.6"
 val fs2Version                  = "3.0.6"
-val grackleVersion              = "0.1.1+0-13e5d4af+20210817-1128-SNAPSHOT"
-val http4sVersion               = "0.23.0-RC1"
-val kindProjectorVersion        = "0.13.0"
+val grackleVersion              = "0.1.14"
+val http4sVersion               = "0.23.6"
+val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.1.1"
 val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "2.1.3"
@@ -19,11 +19,11 @@ lazy val core = project
   .settings(
     name := "lucuma-graphql-routes-core",
     libraryDependencies ++= Seq(
-      "edu.gemini"    %% "clue-model"                % clueVersion,
-      "org.http4s"    %% "http4s-server"             % http4sVersion,
-      "org.http4s"    %% "http4s-dsl"                % http4sVersion,
-      "org.http4s"    %% "http4s-circe"              % http4sVersion,
-      "org.typelevel" %% "log4cats-slf4j"            % log4catsVersion,
+      "edu.gemini"    %% "clue-model"    % clueVersion,
+      "org.http4s"    %% "http4s-server" % http4sVersion,
+      "org.http4s"    %% "http4s-dsl"    % http4sVersion,
+      "org.http4s"    %% "http4s-circe"  % http4sVersion,
+      "org.typelevel" %% "log4cats-core" % log4catsVersion,
     ),
   )
 
@@ -34,7 +34,6 @@ lazy val sangria = project
   .settings(
     name := "lucuma-graphql-routes-sangria",
     libraryDependencies ++= Seq(
-      "co.fs2"              %% "fs2-core"      % fs2Version,
       "org.sangria-graphql" %% "sangria"       % sangriaVersion,
       "org.sangria-graphql" %% "sangria-circe" % sangriaCirceVersion,
     ),

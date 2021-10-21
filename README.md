@@ -9,10 +9,10 @@ libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes-grackle" % <versio
 
 The `HttpRoutes` provided by this library will delegate GraphQL operation to a `GraphQLService` which is computed on a per-request basis. This allows the application to select a different schema based on credentials in the request, for example.
 
-So first, write a method that constructs a `GraphQLService` based on the incoming `Request`.
+So first, write a method that constructs a `GraphQLService` based on the incoming `Authorization` header.
 
 ```scala
-def mkService(req: Request[F]): F[Option[GraphQLService[F]]] =
+def mkService(auth: Authorization): F[Option[GraphQLService[F]]] =
   // Yield None to deny access (403 Forbidden), or a GraphQLService if it's
   // ok to service the request.
 ```
