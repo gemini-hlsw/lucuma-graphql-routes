@@ -27,22 +27,25 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Close
 import org.http4s.websocket.WebSocketFrame.Text
+import org.http4s.headers.`Content-Type`
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 import scala.concurrent.duration._
 import org.http4s.headers.Authorization
 import cats.data.Nested
+import org.http4s.MediaType
 
 object Routes {
 
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]: Logger: Temporal](
-    service:     Option[Authorization] => F[Option[GraphQLService[F]]],
-    wsBuilder:   WebSocketBuilder2[F],
-    graphQLPath: String = "graphql",
-    wsPath:      String = "ws",
+  def forService[F[_]: Logger: Async](
+    service:        Option[Authorization] => F[Option[GraphQLService[F]]],
+    wsBuilder:      WebSocketBuilder2[F],
+    graphQLPath:    String = "graphql",
+    wsPath:         String = "ws",
+    playgroundPath: String = "playground.html",
   ): HttpRoutes[F] = {
 
     val dsl = new Http4sDsl[F]{}
@@ -58,6 +61,9 @@ object Routes {
 
     def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
       Nested(service(req.headers.get[Authorization])).map(new HttpRouteHandler(_)).value
+
+    val playground: F[Response[F]] =
+      Ok(Playground(graphQLPath, wsPath)).map(_.withContentType(`Content-Type`(MediaType.text.html)))
 
     HttpRoutes.of[F] {
 
@@ -82,7 +88,11 @@ object Routes {
         info(s"GET web socket: $req") *>
         new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
-    }
+      // GraphQL Playground
+      case GET -> Root / `playgroundPath` =>
+        playground
+
+    } //<+> resourceServiceBuilder[F]("/assets").toRoutes // our playground.html
   }
 
 }
