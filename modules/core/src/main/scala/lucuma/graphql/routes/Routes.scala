@@ -92,7 +92,7 @@ object Routes {
       case GET -> Root / `playgroundPath` =>
         playground
 
-    } //<+> resourceServiceBuilder[F]("/assets").toRoutes // our playground.html
+    }
   }
 
 }
