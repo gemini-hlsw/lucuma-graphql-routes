@@ -34,5 +34,6 @@ The resulting `HttpRoutes` will serve the following endpoints:
 
 - `Root / "graphql"` using the [Serving over HTTP](https://graphql.org/learn/serving-over-http/) specification.
 - `Root / "ws"` using the [GraphQL over WebSocket Protocol](https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md) specification.
+- `Root / "playground.html"` serving the [GraphQL Playground](https://github.com/graphql/graphql-playground) HTML application.
 
-The `"graphql"` and `"ws"` segments are defaults; you can specify different values when you call `Routes.forService`.
+The `"graphql"`, `"ws"`, and `"playground.html"` segments are defaults; you can specify different values when you call `Routes.forService`.
