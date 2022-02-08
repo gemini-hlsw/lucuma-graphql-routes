@@ -22,7 +22,6 @@ lazy val core = project
       "org.http4s"    %% "http4s-circe"  % http4sVersion,
       "org.typelevel" %% "log4cats-core" % log4catsVersion,
     ),
-    botchedReleases,
   )
 
 lazy val sangria = project
@@ -38,7 +37,6 @@ lazy val sangria = project
       "-Ymacro-annotations",
       "-Ywarn-macros:after"
     ),
-    botchedReleases,
   )
 
 lazy val grackle = project
@@ -49,7 +47,4 @@ lazy val grackle = project
     libraryDependencies ++= Seq(
       "edu.gemini" %% "gsp-graphql-core" % grackleVersion,
     ),
-    botchedReleases,
   )
-
-lazy val botchedReleases = mimaPreviousArtifacts ~= { _.filterNot(_.revision == "0.1.0") }
