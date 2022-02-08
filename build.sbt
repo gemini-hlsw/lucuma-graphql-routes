@@ -1,3 +1,5 @@
+ThisBuild / tlBaseVersion := "0.1"
+
 val clueVersion                 = "0.18.6"
 val fs2Version                  = "3.0.6"
 val grackleVersion              = "0.1.14"
@@ -7,16 +9,10 @@ val log4catsVersion             = "2.1.1"
 val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "2.1.3"
 
-inThisBuild(Seq(
-  homepage := Some(url("https://github.com/gemini-hlsw")),
-  addCompilerPlugin(("org.typelevel" % "kind-projector" % kindProjectorVersion).cross(CrossVersion.full)),
-) ++ lucumaPublishSettings)
-
-publish / skip := true
+enablePlugins(NoPublishPlugin)
 
 lazy val core = project
   .in(file("modules/core"))
-  .enablePlugins(AutomateHeaderPlugin)
   .settings(
     name := "lucuma-graphql-routes-core",
     libraryDependencies ++= Seq(
@@ -31,7 +27,6 @@ lazy val core = project
 lazy val sangria = project
   .in(file("modules/sangria"))
   .dependsOn(core)
-  .enablePlugins(AutomateHeaderPlugin)
   .settings(
     name := "lucuma-graphql-routes-sangria",
     libraryDependencies ++= Seq(
@@ -47,7 +42,6 @@ lazy val sangria = project
 lazy val grackle = project
   .in(file("modules/grackle"))
   .dependsOn(core)
-  .enablePlugins(AutomateHeaderPlugin)
   .settings(
     name := "lucuma-graphql-routes-grackle",
     libraryDependencies ++= Seq(
