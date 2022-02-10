@@ -84,7 +84,7 @@ class SangriaGraphQLService[F[_]: Async, A](
 
   }
 
-  def format(err: Throwable): Json =
-    ErrorFormatter.format(err)
+  def format(err: Throwable): F[Json] =
+    ErrorFormatter.format(err).pure[F]
 
 }

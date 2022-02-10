@@ -154,7 +154,7 @@ object Connection {
             .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
 
         val action = parseResult match {
-          case Left(err)  => send(Some(Error(id, service.format(err))))
+          case Left(err)  => service.format(err).flatMap { json => send(Some(Error(id, json))) }
           case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
         }
 
@@ -175,7 +175,7 @@ object Connection {
         for {
           r <- service.query(request)
           _ <- r.fold(
-                 err  => send(Some(Error(id, service.format(err)))),
+                 err  => service.format(err).flatMap(json => send(Some(Error(id, json)))),
                  json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
                )
         } yield ()

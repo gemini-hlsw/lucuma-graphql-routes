@@ -106,7 +106,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
   def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
     result match {
-      case Left(err)   => BadRequest(service.format(err))
+      case Left(err)   => Ok(service.format(err)) // in GraphQL errors are reported in a 200 Ok response (!)
       case Right(json) => Ok(json)
     }
 
@@ -120,12 +120,12 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   ): F[Response[F]] =
     vars0.sequence.fold(
       errors =>
-        BadRequest(errors.map(_.sanitized).mkString_("", ",", "")),
+        Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
 
       vars   =>
         parse(query) match {
           case Left(error) =>
-            BadRequest(service.format(error))
+            Ok(service.format(error)) // in GraphQL errors are reported in a 200 Ok response (!)
 
           case Right(ast)  =>
             for {

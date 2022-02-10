@@ -19,8 +19,9 @@ import fs2.Stream
 import io.circe.Json
 
 import scala.util.control.NonFatal
+import org.typelevel.log4cats.Logger
 
-class GrackleGraphQLService[F[_]: MonadThrow](
+class GrackleGraphQLService[F[_]: MonadThrow: Logger](
   mapping: Mapping[F],
 )(implicit ev: Compiler[F,F]) extends GraphQLService[F] {
 
@@ -53,13 +54,19 @@ class GrackleGraphQLService[F[_]: MonadThrow](
       case Left(errs) => Stream.emit(Left(GrackleException(errs)))
     }
 
-  def format(err: Throwable): Json =
-    QueryInterpreter.mkResponse(None,
-      err match {
-        case GrackleException(ps) => ps
-        case ex                   => List(Problem(ex.getMessage)) // weak, do better here
+  def format(err: Throwable): F[Json] =
+    Logger[F].error(err)("Error computing GraphQL response.")
+      .unlessA(err.isInstanceOf[GrackleException])
+      .as {
+        QueryInterpreter.mkResponse(None,
+          err match {
+            case GrackleException(ps) => ps
+            case ex =>
+              // Don't show the details to the user.
+              List(Problem(s"An internal error of type ${ex.getClass.getSimpleName} occurred."))
+          }
+        )
       }
-    )
 
 }
 
