@@ -68,9 +68,9 @@ object Subscriptions {
 
   // Converts raw graphQL subscription events into FromServer messages.
   private def fromServerPipe[F[_]](id: String, service: GraphQLService[F]): Pipe[F, Either[Throwable, Json], FromServer] =
-    _.map {
-      case Left(err)   => Error(id, service.format(err))
-      case Right(json) => json.toStreamingMessage(id)
+    _.flatMap {
+      case Left(err)   => Stream.eval(service.format(err)).map(Error(id, _))
+      case Right(json) => Stream(json.toStreamingMessage(id))
     }
 
   def apply[F[_]: Logger: Concurrent](

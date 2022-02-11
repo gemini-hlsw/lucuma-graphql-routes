@@ -24,6 +24,6 @@ trait GraphQLService[F[_]] {
 
   def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
 
-  def format(err: Throwable): Json
+  def format(err: Throwable): F[Json]
 
 }
