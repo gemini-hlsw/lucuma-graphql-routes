@@ -1,4 +1,4 @@
-ThisBuild / tlBaseVersion := "0.2"
+ThisBuild / tlBaseVersion := "0.3"
 
 val clueVersion                 = "0.20.2"
 val fs2Version                  = "3.0.6"
