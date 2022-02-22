@@ -1,13 +1,13 @@
-ThisBuild / tlBaseVersion := "0.2"
+ThisBuild / tlBaseVersion := "0.3"
 
-val clueVersion                 = "0.18.6"
+val clueVersion                 = "0.20.2"
 val fs2Version                  = "3.0.6"
 val grackleVersion              = "0.1.14"
 val http4sVersion               = "0.23.6"
 val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.1.1"
 val sangriaCirceVersion         = "1.3.2"
-val sangriaVersion              = "2.1.3"
+val sangriaVersion              = "3.0.0"
 
 enablePlugins(NoPublishPlugin)
 
