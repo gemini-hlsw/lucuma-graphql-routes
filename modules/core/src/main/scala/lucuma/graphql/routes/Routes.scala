@@ -3,6 +3,7 @@
 
 package lucuma.graphql.routes
 
+import cats.data.Nested
 import cats.data.ValidatedNel
 import cats.effect._
 import cats.effect.std.Queue
@@ -17,23 +18,23 @@ import org.http4s.Header
 import org.http4s.Headers
 import org.http4s.HttpRoutes
 import org.http4s.InvalidMessageBodyFailure
+import org.http4s.MediaType
 import org.http4s.ParseFailure
 import org.http4s.QueryParamDecoder
 import org.http4s.Request
 import org.http4s.Response
 import org.http4s.circe._
 import org.http4s.dsl.Http4sDsl
+import org.http4s.headers.Authorization
+import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Close
 import org.http4s.websocket.WebSocketFrame.Text
-import org.http4s.headers.`Content-Type`
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
+
 import scala.concurrent.duration._
-import org.http4s.headers.Authorization
-import cats.data.Nested
-import org.http4s.MediaType
 
 object Routes {
 
