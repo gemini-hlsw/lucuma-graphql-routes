@@ -13,9 +13,9 @@ import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
 import io.circe.Json
+import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
-import org.http4s.ParseResult
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
