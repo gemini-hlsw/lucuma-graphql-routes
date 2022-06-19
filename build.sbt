@@ -32,11 +32,19 @@ lazy val sangria = project
   .dependsOn(core)
   .settings(
     name := "lucuma-graphql-routes-sangria",
-    crossScalaVersions := Seq("2.13.8"),
-    libraryDependencies ++= Seq(
-      "org.sangria-graphql" %% "sangria"       % sangriaVersion,
-      "org.sangria-graphql" %% "sangria-circe" % sangriaCirceVersion,
-    ),
+    libraryDependencies ++= {
+      if (tlIsScala3.value) {
+        Nil
+      } else {
+        Seq(
+          "org.sangria-graphql" %% "sangria"       % sangriaVersion,
+          "org.sangria-graphql" %% "sangria-circe" % sangriaCirceVersion,
+        )
+      }
+    },
+    mimaPreviousArtifacts := {
+      if (tlIsScala3.value) Set.empty else mimaPreviousArtifacts.value
+    },
     scalacOptions ++= Seq(
       "-Ymacro-annotations",
       "-Ywarn-macros:after"
