@@ -13,7 +13,7 @@ enablePlugins(NoPublishPlugin)
 
 ThisBuild / scalaVersion := "2.13.8"
 ThisBuild / crossScalaVersions := Seq("2.13.8", "3.1.2")
-ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.1")
+ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 
 lazy val core = project
   .in(file("modules/core"))
