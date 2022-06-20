@@ -5,7 +5,7 @@ val fs2Version                  = "3.2.7"
 val grackleVersion              = "0.1.14"
 val http4sVersion               = "0.23.12"
 val kindProjectorVersion        = "0.13.2"
-val log4catsVersion             = "2.3.1"
+val log4catsVersion             = "2.3.2"
 val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "3.0.0"
 
