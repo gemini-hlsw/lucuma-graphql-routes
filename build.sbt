@@ -1,6 +1,6 @@
 ThisBuild / tlBaseVersion := "0.3"
 
-val clueVersion                 = "0.23.0"
+val clueVersion                 = "0.23.1"
 val fs2Version                  = "3.2.7"
 val grackleVersion              = "0.2.0"
 val http4sVersion               = "0.23.12"
