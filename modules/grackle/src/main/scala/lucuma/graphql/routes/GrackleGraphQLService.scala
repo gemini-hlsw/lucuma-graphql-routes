@@ -17,8 +17,8 @@ import edu.gemini.grackle.UntypedOperation.UntypedSubscription
 import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
-import org.typelevel.log4cats.Logger
 import natchez.Trace
+import org.typelevel.log4cats.Logger
 
 import scala.util.control.NonFatal
 
