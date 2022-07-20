@@ -13,7 +13,7 @@ val sangriaVersion              = "3.0.1"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / scalaVersion := "2.13.8"
-ThisBuild / crossScalaVersions := Seq("2.13.8", "3.1.2")
+ThisBuild / crossScalaVersions := Seq("2.13.8", "3.1.3")
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 
 lazy val core = project
