@@ -18,10 +18,11 @@ import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
 import org.typelevel.log4cats.Logger
+import natchez.Trace
 
 import scala.util.control.NonFatal
 
-class GrackleGraphQLService[F[_]: MonadThrow: Logger](
+class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
   mapping: Mapping[F],
 )(implicit ev: Compiler[F,F]) extends GraphQLService[F] {
 
@@ -37,9 +38,12 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger](
     QueryParser.parseText(query).toEither.leftMap(GrackleException(_))
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]] =
-    subscribe(request).compile.toList.map {
-      case List(e) => e
-      case other   => GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")).asLeft
+    Trace[F].span("graphql") {
+      Trace[F].put("graphql.query" -> request.query.query.render) *>
+      subscribe(request).compile.toList.map {
+        case List(e) => e
+        case other   => GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")).asLeft
+      }
     }
 
   def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
