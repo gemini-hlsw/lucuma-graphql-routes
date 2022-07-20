@@ -1,13 +1,14 @@
-ThisBuild / tlBaseVersion := "0.3"
+ThisBuild / tlBaseVersion := "0.4"
 
-val clueVersion                 = "0.23.0"
+val clueVersion                 = "0.23.1"
 val fs2Version                  = "3.2.7"
-val grackleVersion              = "0.2.0"
-val http4sVersion               = "0.23.12"
+val grackleVersion              = "0.3.0"
+val http4sVersion               = "0.23.13"
 val kindProjectorVersion        = "0.13.2"
-val log4catsVersion             = "2.3.2"
+val log4catsVersion             = "2.4.0"
+val natchezVersion              = "0.1.6"
 val sangriaCirceVersion         = "1.3.2"
-val sangriaVersion              = "3.0.0"
+val sangriaVersion              = "3.0.1"
 
 enablePlugins(NoPublishPlugin)
 
@@ -58,6 +59,7 @@ lazy val grackle = project
   .settings(
     name := "lucuma-graphql-routes-grackle",
     libraryDependencies ++= Seq(
-      "edu.gemini" %% "gsp-graphql-core" % grackleVersion,
+      "edu.gemini"   %% "gsp-graphql-core" % grackleVersion,
+      "org.tpolecat" %% "natchez-core"     % natchezVersion,
     ),
   )
