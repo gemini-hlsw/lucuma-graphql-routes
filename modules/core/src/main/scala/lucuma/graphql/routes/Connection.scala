@@ -150,7 +150,7 @@ object Connection {
 
         val parseResult =
           service
-            .parse(raw.query)
+            .parse(raw.query, raw.operationName)
             .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
 
         val action = parseResult match {

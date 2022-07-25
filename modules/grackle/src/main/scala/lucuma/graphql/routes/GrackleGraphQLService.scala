@@ -34,8 +34,8 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
       case _                         => false
     }
 
-  def parse(query: String): Either[Throwable, Document] =
-    QueryParser.parseText(query).toEither.leftMap(GrackleException(_))
+  def parse(query: String, op: Option[String]): Either[Throwable, Document] =
+    QueryParser.parseText(query, op).toEither.leftMap(GrackleException(_))
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]] =
     Trace[F].span("graphql") {

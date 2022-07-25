@@ -16,7 +16,7 @@ trait GraphQLService[F[_]] {
     vars:  Option[Json]
   )
 
-  def parse(query: String): Either[Throwable, Document]
+  def parse(query: String, op: Option[String]): Either[Throwable, Document]
 
   def isSubscription(doc: ParsedGraphQLRequest): Boolean
 

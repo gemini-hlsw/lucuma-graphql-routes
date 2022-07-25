@@ -30,7 +30,7 @@ class SangriaGraphQLService[F[_]: Async, A](
 
   type Document = sangria.ast.Document
 
-  def parse(query: String): Either[Throwable, Document] =
+  def parse(query: String, op: Option[String]): Either[Throwable, Document] =
     QueryParser.parse(query).toEither
 
   def isSubscription(req: ParsedGraphQLRequest): Boolean =
