@@ -102,7 +102,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
   import service.{ Document, ParsedGraphQLRequest }
 
-  val dsl = new Http4sDsl[F]{}
+  val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
 
   def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
@@ -111,8 +111,8 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       case Right(json) => Ok(json)
     }
 
-  private def parse(query: String): Either[Throwable, Document] =
-    service.parse(query)
+  private def parse(query: String, op: Option[String]): Either[Throwable, Document] =
+    service.parse(query, op)
 
   def oneOffGet(
     query: String,
@@ -124,7 +124,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
         Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
 
       vars   =>
-        parse(query) match {
+        parse(query, op) match {
           case Left(error) =>
             Ok(service.format(error)) // in GraphQL errors are reported in a 200 Ok response (!)
 
@@ -143,7 +143,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
       op     =  obj("operationName").flatMap(_.asString)
       vars   =  obj("variables")
-      parsed = parse(query).map(ParsedGraphQLRequest(_, op, vars))
+      parsed = parse(query, op).map(ParsedGraphQLRequest(_, op, vars))
       result <- parsed.traverse(service.query).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
