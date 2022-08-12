@@ -8,7 +8,7 @@ val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.4.0"
 val natchezVersion              = "0.1.6"
 val sangriaCirceVersion         = "1.3.2"
-val sangriaVersion              = "3.0.1"
+val sangriaVersion              = "3.2.0"
 
 enablePlugins(NoPublishPlugin)
 
