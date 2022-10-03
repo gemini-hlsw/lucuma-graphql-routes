@@ -4,4 +4,4 @@ resolvers += "sonatype-s01-snapshots".at(
 )
 
 addSbtPlugin("edu.gemini"       % "sbt-lucuma-lib" % "0.10.2")
-addSbtPlugin("com.timushev.sbt" % "sbt-updates"    % "0.6.3")
+addSbtPlugin("com.timushev.sbt" % "sbt-updates"    % "0.6.4")
