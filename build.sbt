@@ -6,7 +6,7 @@ val grackleVersion              = "0.10.0"
 val http4sVersion               = "0.23.16"
 val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.5.0"
-val natchezVersion              = "0.2.2"
+val natchezVersion              = "0.1.6"
 val sangriaCirceVersion         = "1.3.2"
 val sangriaVersion              = "3.4.1"
 
