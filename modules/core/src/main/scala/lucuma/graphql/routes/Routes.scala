@@ -164,7 +164,7 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
 
     def logFromServer(msg: FromServer): F[Unit] =
       msg match {
-        case FromServer.ConnectionKeepAlive => info(s"Sending ConnectionKeepAlive")
+        case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
         case _                              => info(s"Sending to client: ${trimmedMessage(msg)}")
       }
 
