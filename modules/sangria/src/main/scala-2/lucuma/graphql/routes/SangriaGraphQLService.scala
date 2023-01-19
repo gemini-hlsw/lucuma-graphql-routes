@@ -61,7 +61,7 @@ class SangriaGraphQLService[F[_]: Async, A](
     import sangria.execution.ExecutionScheme.Stream
 
     fs2.Stream.eval {
-      Dispatcher[F].use { implicit d =>
+      Dispatcher.parallel[F].use { implicit d =>
         Async[F].fromFuture {
           Async[F].delay {
             Executor.prepare(
