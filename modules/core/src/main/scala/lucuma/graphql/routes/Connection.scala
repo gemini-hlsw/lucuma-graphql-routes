@@ -4,15 +4,19 @@
 package lucuma.graphql.routes
 
 import cats.MonadError
+import cats.data.NonEmptyList
 import cats.effect.Concurrent
 import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.syntax.all._
+import clue.model.GraphQLError
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
+import io.circe.Encoder
 import io.circe.Json
+import io.circe.syntax._
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
@@ -58,7 +62,7 @@ object Connection {
      * Starts a Graph QL operation associated with a particular id.
      * @return state transition and action to execute
      */
-    def start(id:  String, req: GraphQLRequest): (ConnectionState[F], F[Unit])
+    def start[V: Encoder](id:  String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit])
 
     /**
      * Terminates a Graph QL subscription associated with a particular id
@@ -107,7 +111,7 @@ object Connection {
          } yield ()
         )
 
-      override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
+      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
         doClose(s"start($id, $req)")
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -146,15 +150,15 @@ object Connection {
             r(Some(ConnectionKeepAlive))
         )
 
-      override def start(id: String, raw: GraphQLRequest): (ConnectionState[F], F[Unit]) = {
+      override def start[V: Encoder](id: String, raw: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) = {
 
         val parseResult =
           service
             .parse(raw.query, raw.operationName)
-            .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables))
+            .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables.map(_.asJson)))
 
         val action = parseResult match {
-          case Left(err)  => service.format(err).flatMap { json => send(Some(Error(id, json))) }
+          case Left(err)  => service.format(err).flatMap { errors => send(Some(Error(id, errors))) }
           case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
         }
 
@@ -175,7 +179,7 @@ object Connection {
         for {
           r <- service.query(request)
           _ <- r.fold(
-                 err  => service.format(err).flatMap(json => send(Some(Error(id, json)))),
+                 err  => service.format(err).flatMap(errors => send(Some(Error(id, errors)))),
                  json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
                )
         } yield ()
@@ -199,7 +203,7 @@ object Connection {
       ): (ConnectionState[F], F[Unit]) =
         raiseError
 
-      override def start(id: String, req: GraphQLRequest): (ConnectionState[F], F[Unit]) =
+      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
         raiseError
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -262,7 +266,7 @@ object Connection {
 
               // User has insufficient privileges to connect.
               case None =>
-                reply(Some(FromServer.Error("<none>", Json.fromString("Not authorized.")))) *>
+                reply(Some(FromServer.Error("<none>", NonEmptyList.one(GraphQLError("Not authorized."))))) *>
                 handle(_.close)
 
             }
@@ -280,7 +284,7 @@ object Connection {
 
             // Authorization header is present but malformed.
             case Some(Left(_)) =>
-              reply(Some(FromServer.Error("<none>", Json.fromString(s"Authorization property is malformed.")))) *>
+              reply(Some(FromServer.Error("<none>", NonEmptyList.one(GraphQLError("Authorization property is malformed."))))) *>
               handle(_.close)
 
           }

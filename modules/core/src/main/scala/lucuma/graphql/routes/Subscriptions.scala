@@ -17,7 +17,6 @@ import fs2.concurrent.SignallingRef
 import io.circe.Json
 import org.typelevel.log4cats.Logger
 
-
 /** A GraphQL subscription in effect type F. */
 trait Subscriptions[F[_]] {
 
@@ -69,9 +68,10 @@ object Subscriptions {
   // Converts raw graphQL subscription events into FromServer messages.
   private def fromServerPipe[F[_]](id: String, service: GraphQLService[F]): Pipe[F, Either[Throwable, Json], FromServer] =
     _.flatMap {
-      case Left(err)   => Stream.eval(service.format(err)).map(Error(id, _))
+      case Left(err)   => Stream.eval(service.format(err)).map(errors => Error(id, errors))
       case Right(json) => Stream(json.toStreamingMessage(id))
     }
+    
 
   def apply[F[_]: Logger: Concurrent](
     service: GraphQLService[F],

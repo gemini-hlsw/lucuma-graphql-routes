@@ -3,6 +3,7 @@
 
 package lucuma.graphql.routes
 
+import clue.model.GraphQLErrors
 import fs2.Stream
 import io.circe._
 
@@ -24,6 +25,6 @@ trait GraphQLService[F[_]] {
 
   def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
 
-  def format(err: Throwable): F[Json]
+  def format(err: Throwable): F[GraphQLErrors]
 
 }

@@ -3,37 +3,33 @@
 
 package lucuma.graphql.routes.syntax
 
+import cats.data.NonEmptyList
+import clue.model.GraphQLCombinedResponse
+import clue.model.GraphQLDataResponse
+import clue.model.GraphQLError
 import clue.model.StreamingMessage.FromServer
 import clue.model.StreamingMessage.FromServer.Data
-import clue.model.StreamingMessage.FromServer.DataWrapper
 import clue.model.StreamingMessage.FromServer.Error
+import clue.model.json._
 import io.circe.Json
 
 final class JsonOps(val self: Json) extends AnyVal {
 
-  def objectField(n: String): Option[Json] =
-    self.hcursor.downField(n).focus
-
-  def errorsField: Option[Json] =
-    objectField("errors").filterNot(_.isNull)
-
-  def dataField: Option[Json] =
-    objectField("data").filterNot(_.isNull)
-
   private def unexpectedErrorMessage(id: String): FromServer =
     Error(
       id,
-      Json.arr(
-        Json.obj(
-          "message" -> Json.fromString(s"Internal server error, expected error or data but got:\n${self.spaces2}")
-        )
+      NonEmptyList.one(
+        GraphQLError(s"Internal server error, expected error or data but got:\n${self.spaces2}")
       )
     )
 
   def toStreamingMessage(id: String): FromServer =
-    dataField.fold(errorsField.fold(unexpectedErrorMessage(id))(Error(id, _))) { d =>
-      Data(id, DataWrapper(d, errorsField))
-    }
+    self
+      .as[GraphQLCombinedResponse[Json]]
+      .fold(
+        _ => unexpectedErrorMessage(id),
+        _.toEither.fold(Error(id, _), data => Data(id, GraphQLDataResponse(data)))
+      )
 
 }
 
