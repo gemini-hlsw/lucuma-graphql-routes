@@ -6,6 +6,7 @@ package lucuma.graphql.routes
 import cats.effect.Async
 import cats.effect.std.Dispatcher
 import cats.syntax.all._
+import clue.model.GraphQLErrors
 import fs2.Stream
 import io.circe._
 import sangria.ast.OperationType
@@ -84,7 +85,7 @@ class SangriaGraphQLService[F[_]: Async, A](
 
   }
 
-  def format(err: Throwable): F[Json] =
-    ErrorFormatter.format(err).pure[F]
+  def format(err: Throwable): F[GraphQLErrors] =
+    ErrorConverter.toGraphQLError(err).pure[F]
 
 }

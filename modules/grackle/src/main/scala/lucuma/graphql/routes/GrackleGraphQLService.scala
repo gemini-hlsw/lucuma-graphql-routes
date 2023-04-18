@@ -6,7 +6,10 @@ package lucuma.graphql.routes
 import cats.MonadThrow
 import cats.data.Ior
 import cats.data.NonEmptyChain
+import cats.data.NonEmptyList
 import cats.syntax.all._
+import clue.model.GraphQLError
+import clue.model.GraphQLErrors
 import edu.gemini.grackle.Cursor
 import edu.gemini.grackle.Mapping
 import edu.gemini.grackle.Problem
@@ -17,6 +20,7 @@ import edu.gemini.grackle.UntypedOperation.UntypedSubscription
 import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
+import lucuma.graphql.routes.conversions._
 import natchez.Trace
 import org.typelevel.log4cats.Logger
 
@@ -58,18 +62,18 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
       case Left(errs) => Stream.emit(Left(GrackleException(errs)))
     }
 
-  def format(err: Throwable): F[Json] =
+  def format(err: Throwable): F[GraphQLErrors] =
     Logger[F].error(err)("Error computing GraphQL response.")
       .unlessA(err.isInstanceOf[GrackleException])
       .as {
-        QueryInterpreter.mkResponse(None,
-          err match {
+        NonEmptyList.fromList(
+          (err match {
             case GrackleException(ps) => ps
             case ex =>
               // Don't show the details to the user.
               List(Problem(s"An internal error of type ${ex.getClass.getSimpleName} occurred."))
-          }
-        )
+          }).map(_.toGraphQLError)
+        ).getOrElse(NonEmptyList.one(GraphQLError("An unspecified error has occurred.")))
       }
 
 }

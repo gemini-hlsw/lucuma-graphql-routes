@@ -8,6 +8,7 @@ import cats.data.ValidatedNel
 import cats.effect._
 import cats.effect.std.Queue
 import cats.implicits._
+import clue.model.GraphQLErrors
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json._
@@ -105,9 +106,14 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
 
+  private def errorsToJson(errors: GraphQLErrors): Json = 
+    Json.obj(
+      "errors" -> errors.asJson
+    )
+
   def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
     result match {
-      case Left(err)   => Ok(service.format(err)) // in GraphQL errors are reported in a 200 Ok response (!)
+      case Left(err)   => Ok(service.format(err).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
       case Right(json) => Ok(json)
     }
 
@@ -126,7 +132,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       vars   =>
         parse(query, op) match {
           case Left(error) =>
-            Ok(service.format(error)) // in GraphQL errors are reported in a 200 Ok response (!)
+            Ok(service.format(error).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
 
           case Right(ast)  =>
             for {
