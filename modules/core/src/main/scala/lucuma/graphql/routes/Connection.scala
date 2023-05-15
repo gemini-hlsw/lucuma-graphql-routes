@@ -106,7 +106,7 @@ object Connection {
       private def doClose(m: String): (ConnectionState[F], F[Unit]) =
         (closed,
          for {
-           _ <- info(s"Request received on un-initialized connection: $m. Closing.")
+           _ <- debug(s"Request received on un-initialized connection: $m. Closing.")
            _ <- replyQueue.offer(None)
          } yield ()
         )
@@ -252,7 +252,7 @@ object Connection {
           val reply: Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
-              _ <- info(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+              _ <- debug(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
