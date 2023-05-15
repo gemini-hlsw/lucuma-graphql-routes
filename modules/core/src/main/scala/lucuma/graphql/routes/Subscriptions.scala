@@ -87,7 +87,7 @@ object Subscriptions {
         override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
           for {
             r <- SignallingRef(false)
-            in = r.discrete.evalTap(v => info(s"signalling ref = $v"))
+            in = r.discrete.evalTap(v => debug(s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
             _ <- debug(s"starting event stream $id")
             f <- es.compile.drain.start

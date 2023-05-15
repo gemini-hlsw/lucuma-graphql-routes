@@ -71,7 +71,7 @@ object Routes {
 
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
-        info(s"GET one off: query=$query, op=$op, vars=$vars") *>
+        debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffGet(query, op, vars)
           case None    => Forbidden("Access denied.")
@@ -79,7 +79,7 @@ object Routes {
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / `graphQLPath` =>
-        info(s"POST one off: request=$req") *>
+        debug(s"POST one off: request=$req") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffPost(req)
           case None    => Forbidden("Access denied.")
@@ -87,7 +87,7 @@ object Routes {
 
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
-        info(s"GET web socket: $req") *>
+        debug(s"GET web socket: $req") *>
         new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
       // GraphQL Playground
@@ -171,7 +171,7 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
     def logFromServer(msg: FromServer): F[Unit] =
       msg match {
         case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
-        case _                              => info(s"Sending to client: ${trimmedMessage(msg)}")
+        case _                              => debug(s"Sending to client: ${trimmedMessage(msg)}")
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -182,8 +182,8 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
       val RedactedAuth = """$1 <REDACTED>"""
 
       f match {
-        case Text(s, last) => info(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-        case _             => info(s"Received message from client: $f")
+        case Text(s, last) => debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+        case _             => debug(s"Received message from client: $f")
       }
     }
 
