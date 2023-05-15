@@ -4,7 +4,6 @@
 package lucuma.graphql.routes
 
 import cats.MonadThrow
-import cats.data.Ior
 import cats.data.NonEmptyChain
 import cats.data.NonEmptyList
 import cats.syntax.all._
@@ -13,7 +12,6 @@ import clue.model.GraphQLErrors
 import edu.gemini.grackle.Cursor
 import edu.gemini.grackle.Mapping
 import edu.gemini.grackle.Problem
-import edu.gemini.grackle.QueryInterpreter
 import edu.gemini.grackle.QueryParser
 import edu.gemini.grackle.UntypedOperation
 import edu.gemini.grackle.UntypedOperation.UntypedSubscription
@@ -39,7 +37,7 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
     }
 
   def parse(query: String, op: Option[String]): Either[Throwable, Document] =
-    QueryParser.parseText(query, op).toEither.leftMap(GrackleException(_))
+    QueryParser.parseText(query, op).toEither.leftMap(_.map(GrackleException(_)).merge)
 
   def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]] =
     Trace[F].span("graphql") {
@@ -53,13 +51,9 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
   def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
     mapping.compiler.compileUntyped(request.query, request.vars).toEither match {
       case Right(operation) =>
-        mapping.interpreter.runRoot(operation.query, operation.rootTpe, Cursor.Env.empty).map {
-          case Ior.Left(errs) => Left(GrackleException(errs): Throwable)
-          case other          => Right(QueryInterpreter.mkResponse(other))
-        } recover {
-          case NonFatal(t) => Left(t)
-        }
-      case Left(errs) => Stream.emit(Left(GrackleException(errs)))
+        mapping.run(operation.query, operation.rootTpe, Cursor.Env.empty)
+          .map(_.asRight[Throwable]) recover { case NonFatal(t) => Left(t) }
+      case Left(e) => Stream.emit(Left(e.map(GrackleException(_)).merge))
     }
 
   def format(err: Throwable): F[GraphQLErrors] =
