@@ -292,7 +292,7 @@ object Connection {
         }
 
         override def receive(m: FromClient): F[Unit] =
-          Logger[F].info(s"received $m") *> {
+          Logger[F].debug(s"received $m") *> {
             m match {
               case ConnectionInit(m)   => init(m)
               case Start(id, request)  => handle(_.start(id, request))
