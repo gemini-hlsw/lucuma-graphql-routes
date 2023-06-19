@@ -2,18 +2,18 @@ ThisBuild / tlBaseVersion := "0.6"
 
 val clueVersion                 = "0.31.1"
 val fs2Version                  = "3.2.7"
-val grackleVersion              = "0.12.0"
-val http4sVersion               = "0.23.19"
+val grackleVersion              = "0.13.0"
+val http4sVersion               = "0.23.21"
 val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.6.0"
 val natchezVersion              = "0.3.2"
 val sangriaCirceVersion         = "1.3.2"
-val sangriaVersion              = "3.5.3"
+val sangriaVersion              = "4.0.0"
 
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / scalaVersion := "2.13.10"
-ThisBuild / crossScalaVersions := Seq("2.13.10", "3.2.2")
+ThisBuild / crossScalaVersions := Seq("2.13.10", "3.3.0")
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 
 lazy val core = project
