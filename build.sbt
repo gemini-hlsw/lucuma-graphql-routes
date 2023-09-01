@@ -2,13 +2,11 @@ ThisBuild / tlBaseVersion := "0.6"
 
 val clueVersion                 = "0.32.0"
 val fs2Version                  = "3.2.7"
-val grackleVersion              = "0.13.0"
+val grackleVersion              = "0.14-74b6b5d-SNAPSHOT"
 val http4sVersion               = "0.23.23"
 val kindProjectorVersion        = "0.13.2"
 val log4catsVersion             = "2.6.0"
 val natchezVersion              = "0.3.3"
-val sangriaCirceVersion         = "1.3.2"
-val sangriaVersion              = "4.0.1"
 
 enablePlugins(NoPublishPlugin)
 
@@ -26,30 +24,6 @@ lazy val core = project
       "org.http4s"    %% "http4s-dsl"    % http4sVersion,
       "org.http4s"    %% "http4s-circe"  % http4sVersion,
       "org.typelevel" %% "log4cats-core" % log4catsVersion,
-    ),
-  )
-
-lazy val sangria = project
-  .in(file("modules/sangria"))
-  .dependsOn(core)
-  .settings(
-    name := "lucuma-graphql-routes-sangria",
-    libraryDependencies ++= {
-      if (tlIsScala3.value) {
-        Nil
-      } else {
-        Seq(
-          "org.sangria-graphql" %% "sangria"       % sangriaVersion,
-          "org.sangria-graphql" %% "sangria-circe" % sangriaCirceVersion,
-        )
-      }
-    },
-    mimaPreviousArtifacts := {
-      if (tlIsScala3.value) Set.empty else mimaPreviousArtifacts.value
-    },
-    scalacOptions ++= Seq(
-      "-Ymacro-annotations",
-      "-Ywarn-macros:after"
     ),
   )
 
