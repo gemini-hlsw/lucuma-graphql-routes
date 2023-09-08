@@ -6,24 +6,17 @@ package lucuma.graphql.routes
 import clue.model.GraphQLErrors
 import fs2.Stream
 import io.circe._
+import edu.gemini.grackle.Operation
 
 trait GraphQLService[F[_]] {
 
-  type Document
+  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Either[Throwable, Operation]
 
-  case class ParsedGraphQLRequest(
-    query: Document,
-    op:    Option[String],
-    vars:  Option[Json]
-  )
+  def isSubscription(doc: Operation): Boolean
 
-  def parse(query: String, op: Option[String]): Either[Throwable, Document]
+  def query(request: Operation): F[Either[Throwable, Json]]
 
-  def isSubscription(doc: ParsedGraphQLRequest): Boolean
-
-  def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
-
-  def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
+  def subscribe(request: Operation): Stream[F, Either[Throwable, Json]]
 
   def format(err: Throwable): F[GraphQLErrors]
 

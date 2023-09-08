@@ -17,23 +17,14 @@ ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 lazy val core = project
   .in(file("modules/core"))
   .settings(
-    name := "lucuma-graphql-routes-core",
+    name := "lucuma-graphql-routes",
     libraryDependencies ++= Seq(
       "edu.gemini"    %% "clue-model"    % clueVersion,
       "org.http4s"    %% "http4s-server" % http4sVersion,
       "org.http4s"    %% "http4s-dsl"    % http4sVersion,
       "org.http4s"    %% "http4s-circe"  % http4sVersion,
       "org.typelevel" %% "log4cats-core" % log4catsVersion,
-    ),
-  )
-
-lazy val grackle = project
-  .in(file("modules/grackle"))
-  .dependsOn(core)
-  .settings(
-    name := "lucuma-graphql-routes-grackle",
-    libraryDependencies ++= Seq(
-      "edu.gemini"   %% "gsp-graphql-core" % grackleVersion,
-      "org.tpolecat" %% "natchez-core"     % natchezVersion,
+      "edu.gemini"    %% "gsp-graphql-core" % grackleVersion,
+      "org.tpolecat"  %% "natchez-core"     % natchezVersion,
     ),
   )

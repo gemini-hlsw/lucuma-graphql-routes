@@ -14,12 +14,12 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
-import io.circe.Encoder
-import io.circe.Json
-import io.circe.syntax._
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
+import edu.gemini.grackle.Operation
+import io.circe.Json
+import io.circe.JsonObject
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
@@ -62,7 +62,7 @@ object Connection {
      * Starts a Graph QL operation associated with a particular id.
      * @return state transition and action to execute
      */
-    def start[V: Encoder](id:  String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit])
+    def start(id:  String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit])
 
     /**
      * Terminates a Graph QL subscription associated with a particular id
@@ -111,7 +111,7 @@ object Connection {
          } yield ()
         )
 
-      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
         doClose(s"start($id, $req)")
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -137,8 +137,6 @@ object Connection {
 
     new ConnectionState[F] {
 
-      import service.ParsedGraphQLRequest
-
       override def reset(
         service: GraphQLService[F],
         r: Option[FromServer] => F[Unit],
@@ -150,20 +148,13 @@ object Connection {
             r(Some(ConnectionKeepAlive))
         )
 
-      override def start[V: Encoder](id: String, raw: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) = {
-
-        val parseResult =
-          service
-            .parse(raw.query, raw.operationName)
-            .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables.map(_.asJson)))
-
+      override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
+        val parseResult = service.parse(raw.query, raw.operationName, raw.variables)
         val action = parseResult match {
           case Left(err)  => service.format(err).flatMap { errors => send(Some(Error(id, errors))) }
           case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
         }
-
         (this, action)
-
       }
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -172,10 +163,10 @@ object Connection {
       override val stopAll: (ConnectionState[F], F[Unit]) =
         (this, subscriptions.removeAll)
 
-      def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
+      def subscribe(id: String, request: Operation): F[Unit] =
         subscriptions.add(id, service.subscribe(request))
 
-      def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
+      def execute(id: String, request: Operation): F[Unit] =
         for {
           r <- service.query(request)
           _ <- r.fold(
@@ -203,7 +194,7 @@ object Connection {
       ): (ConnectionState[F], F[Unit]) =
         raiseError
 
-      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
         raiseError
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =

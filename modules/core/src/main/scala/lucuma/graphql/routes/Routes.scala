@@ -53,13 +53,16 @@ object Routes {
     val dsl = new Http4sDsl[F]{}
     import dsl._
 
-    implicit val jsonQPDecoder: QueryParamDecoder[Json] = QueryParamDecoder[String].emap { s =>
-      parser.parse(s).leftMap { case ParsingFailure(msg, _) => ParseFailure("Invalid variables", msg) }
+    implicit val jsonQPDecoder: QueryParamDecoder[JsonObject] = QueryParamDecoder[String].emap { s =>
+      parser.parse(s) match { 
+        case Left(ParsingFailure(msg, _)) => Left(ParseFailure("Invalid variables", msg))
+        case Right(json) => json.asObject.toRight(ParseFailure("Expected JsonObject", json.spaces2))
+      }
     }
 
     object QueryMatcher         extends QueryParamDecoderMatcher[String]("query")
     object OperationNameMatcher extends OptionalQueryParamDecoderMatcher[String]("operationName")
-    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[Json]("variables")
+    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("variables")
 
     def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
       Nested(service(req.headers.get[Authorization])).map(new HttpRouteHandler(_)).value
@@ -101,8 +104,6 @@ object Routes {
 
 class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
-  import service.{ Document, ParsedGraphQLRequest }
-
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
 
@@ -117,26 +118,23 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       case Right(json) => Ok(json)
     }
 
-  private def parse(query: String, op: Option[String]): Either[Throwable, Document] =
-    service.parse(query, op)
-
   def oneOffGet(
     query: String,
     op:    Option[String],
-    vars0: Option[ValidatedNel[ParseFailure, Json]]
+    vars0: Option[ValidatedNel[ParseFailure, JsonObject]]
   ): F[Response[F]] =
     vars0.sequence.fold(
       errors =>
         Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
 
       vars   =>
-        parse(query, op) match {
+        service.parse(query, op, vars) match {
           case Left(error) =>
             Ok(service.format(error).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
 
-          case Right(ast)  =>
+          case Right(op)  =>
             for {
-              result <- service.query(ParsedGraphQLRequest(ast, op, vars))
+              result <- service.query(op)
               resp   <- toResponse(result)
             } yield resp
         }
@@ -148,8 +146,8 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
       op     =  obj("operationName").flatMap(_.asString)
-      vars   =  obj("variables")
-      parsed = parse(query, op).map(ParsedGraphQLRequest(_, op, vars))
+      vars   =  obj("variables").flatMap(_.asObject)
+      parsed =  service.parse(query, op, vars)
       result <- parsed.traverse(service.query).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp

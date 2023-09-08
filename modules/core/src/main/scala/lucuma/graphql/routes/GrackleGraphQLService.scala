@@ -9,12 +9,8 @@ import cats.data.NonEmptyList
 import cats.syntax.all._
 import clue.model.GraphQLError
 import clue.model.GraphQLErrors
-import edu.gemini.grackle.Cursor
 import edu.gemini.grackle.Mapping
 import edu.gemini.grackle.Problem
-import edu.gemini.grackle.QueryParser
-import edu.gemini.grackle.UntypedOperation
-import edu.gemini.grackle.UntypedOperation.UntypedSubscription
 import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
@@ -22,39 +18,41 @@ import lucuma.graphql.routes.conversions._
 import natchez.Trace
 import org.typelevel.log4cats.Logger
 
-import scala.util.control.NonFatal
+import edu.gemini.grackle.Operation
+import edu.gemini.grackle.Result.Failure
+import edu.gemini.grackle.Result
+import edu.gemini.grackle.Result.Success
+import edu.gemini.grackle.Result.Warning
+import io.circe.JsonObject
+import edu.gemini.grackle.Env
 
 class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
   mapping: Mapping[F],
 )(implicit ev: Compiler[F,F]) extends GraphQLService[F] {
 
-  type Document = UntypedOperation
+  def isSubscription(req: Operation): Boolean =
+    mapping.schema.subscriptionType.exists(_ =:= req.rootTpe)
 
-  def isSubscription(req: ParsedGraphQLRequest): Boolean =
-    req.query match {
-      case UntypedSubscription(_, _) => true
-      case _                         => false
+  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Either[Throwable, Operation] =
+    mapping.compiler.compile(query, op, vars.map(_.toJson)) match {
+      case Result.InternalError(error) => Left(error)
+      case Success(value) => Right(value)
+      case Failure(problems) => Left(GrackleException(problems))
+      case Warning(_, value) => Right(value) // todo: log warnings
     }
 
-  def parse(query: String, op: Option[String]): Either[Throwable, Document] =
-    QueryParser.parseText(query, op).toEither.leftMap(_.map(GrackleException(_)).merge)
-
-  def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]] =
+  def query(request: Operation): F[Either[Throwable, Json]] =
     Trace[F].span("graphql") {
-      Trace[F].put("graphql.query" -> request.query.query.render) *>
+      Trace[F].put("graphql.query" -> request.query.render) *>
       subscribe(request).compile.toList.map {
         case List(e) => e
         case other   => GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")).asLeft
       }
     }
 
-  def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]] =
-    mapping.compiler.compileUntyped(request.query, request.vars).toEither match {
-      case Right(operation) =>
-        mapping.run(operation.query, operation.rootTpe, Cursor.Env.empty)
-          .map(_.asRight[Throwable]) recover { case NonFatal(t) => Left(t) }
-      case Left(e) => Stream.emit(Left(e.map(GrackleException(_)).merge))
-    }
+  def subscribe(op: Operation): Stream[F, Either[Throwable, Json]] =
+    // HMM: we don't get throwables on the left anymore
+    mapping.interpreter.run(op.query, op.rootTpe, Env.EmptyEnv).evalMap(mapping.mkResponse).map(_.asRight)
 
   def format(err: Throwable): F[GraphQLErrors] =
     Logger[F].error(err)("Error computing GraphQL response.")
