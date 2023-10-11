@@ -10,7 +10,7 @@ import io.circe._
 
 trait GraphQLService[F[_]] {
 
-  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Either[Throwable, Operation]
+  def parse(query: String, op: Option[String], vars: Option[JsonObject]): F[Either[Throwable, Operation]]
 
   def isSubscription(doc: Operation): Boolean
 

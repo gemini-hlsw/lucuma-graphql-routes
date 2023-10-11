@@ -32,12 +32,14 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
   def isSubscription(req: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= req.rootTpe)
 
-  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Either[Throwable, Operation] =
+  def parse(query: String, op: Option[String], vars: Option[JsonObject]): F[Either[Throwable, Operation]] =
     mapping.compiler.compile(query, op, vars.map(_.toJson)) match {
-      case Result.InternalError(error) => Left(error)
-      case Success(value) => Right(value)
-      case Failure(problems) => Left(GrackleException(problems))
-      case Warning(_, value) => Right(value) // todo: log warnings
+      case Result.InternalError(error) => error.asLeft.pure[F]
+      case Success(value)              => value.asRight.pure[F]
+      case Failure(problems)           => (GrackleException(problems): Throwable).asLeft.pure[F]
+      case Warning(ps, value)          => 
+        // For now we swallow the warnings. Would be better to pass the `Result` back.
+        ps.traverse(p => Logger[F].warn(p.message)).as(value.asRight)
     }
 
   def query(request: Operation): F[Either[Throwable, Json]] =

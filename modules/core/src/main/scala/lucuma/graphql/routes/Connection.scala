@@ -150,7 +150,7 @@ object Connection {
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
         val parseResult = service.parse(raw.query, raw.operationName, raw.variables)
-        val action = parseResult match {
+        val action = parseResult flatMap {
           case Left(err)  => service.format(err).flatMap { errors => send(Some(Error(id, errors))) }
           case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
         }
