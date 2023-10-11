@@ -25,19 +25,3 @@ pull_request_rules:
       add:
       - core
       remove: []
-- name: Label grackle PRs
-  conditions:
-  - files~=^modules/grackle/
-  actions:
-    label:
-      add:
-      - grackle
-      remove: []
-- name: Label sangria PRs
-  conditions:
-  - files~=^modules/sangria/
-  actions:
-    label:
-      add:
-      - sangria
-      remove: []
