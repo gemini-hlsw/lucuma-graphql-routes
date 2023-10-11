@@ -11,7 +11,7 @@ val natchezVersion              = "0.3.3"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / scalaVersion := "2.13.11"
-ThisBuild / crossScalaVersions := Seq("2.13.11", "3.3.0")
+ThisBuild / crossScalaVersions := Seq("2.13.11", "3.3.1")
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 
 lazy val core = project
