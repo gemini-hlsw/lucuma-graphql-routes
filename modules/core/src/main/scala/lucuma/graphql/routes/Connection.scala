@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2022 Association of Universities for Research in Astronomy, Inc. (AURA)
+// Copyright (c) 2016-2023 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
 package lucuma.graphql.routes
@@ -14,12 +14,12 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
-import org.http4s.ParseResult
-import org.http4s.headers.Authorization
-import org.typelevel.log4cats.Logger
 import edu.gemini.grackle.Operation
 import io.circe.Json
 import io.circe.JsonObject
+import org.http4s.ParseResult
+import org.http4s.headers.Authorization
+import org.typelevel.log4cats.Logger
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {

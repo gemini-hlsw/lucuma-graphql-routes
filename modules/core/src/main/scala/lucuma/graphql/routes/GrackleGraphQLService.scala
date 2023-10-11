@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2022 Association of Universities for Research in Astronomy, Inc. (AURA)
+// Copyright (c) 2016-2023 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
 package lucuma.graphql.routes
@@ -9,22 +9,21 @@ import cats.data.NonEmptyList
 import cats.syntax.all._
 import clue.model.GraphQLError
 import clue.model.GraphQLErrors
+import edu.gemini.grackle.Env
 import edu.gemini.grackle.Mapping
+import edu.gemini.grackle.Operation
 import edu.gemini.grackle.Problem
+import edu.gemini.grackle.Result
+import edu.gemini.grackle.Result.Failure
+import edu.gemini.grackle.Result.Success
+import edu.gemini.grackle.Result.Warning
 import fs2.Compiler
 import fs2.Stream
 import io.circe.Json
+import io.circe.JsonObject
 import lucuma.graphql.routes.conversions._
 import natchez.Trace
 import org.typelevel.log4cats.Logger
-
-import edu.gemini.grackle.Operation
-import edu.gemini.grackle.Result.Failure
-import edu.gemini.grackle.Result
-import edu.gemini.grackle.Result.Success
-import edu.gemini.grackle.Result.Warning
-import io.circe.JsonObject
-import edu.gemini.grackle.Env
 
 class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
   mapping: Mapping[F],
