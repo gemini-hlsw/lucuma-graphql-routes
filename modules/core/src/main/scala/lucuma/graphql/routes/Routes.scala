@@ -128,7 +128,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
         Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
 
       vars   =>
-        service.parse(query, op, vars).flatMap {
+        service.parse(query, op, vars) match {
           case Left(error) =>
             Ok(service.format(error).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
 
@@ -147,7 +147,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
       op     =  obj("operationName").flatMap(_.asString)
       vars   =  obj("variables").flatMap(_.asObject)
-      parsed <- service.parse(query, op, vars)
+      parsed =  service.parse(query, op, vars)
       result <- parsed.traverse(service.query).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
