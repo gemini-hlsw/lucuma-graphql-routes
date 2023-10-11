@@ -25,9 +25,9 @@ import lucuma.graphql.routes.conversions._
 import natchez.Trace
 import org.typelevel.log4cats.Logger
 
-class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
+class GraphQLService[F[_]: MonadThrow: Logger: Trace](
   mapping: Mapping[F],
-)(implicit ev: Compiler[F,F]) extends GraphQLService[F] {
+)(implicit ev: Compiler[F,F]) {
 
   def isSubscription(req: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= req.rootTpe)
