@@ -25,7 +25,7 @@ trait Subscriptions[F[_]] {
    * @param id     client-provided id for the subscription
    * @param events stream of Either errors or Json results that match the subscription query
    */
-  def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit]
+  def add(id: String, events: Stream[F, Json]): F[Unit]
 
   /**
    * Removes a subscription so that it no longer provides events to the client.
@@ -66,25 +66,21 @@ object Subscriptions {
   }
 
   // Converts raw graphQL subscription events into FromServer messages.
-  private def fromServerPipe[F[_]](id: String, service: GraphQLService[F]): Pipe[F, Either[Throwable, Json], FromServer] =
-    _.flatMap {
-      case Left(err)   => Stream.eval(service.format(err)).map(errors => Error(id, errors))
-      case Right(json) => Stream(json.toStreamingMessage(id))
-    }
+  private def fromServerPipe[F[_]](id: String): Pipe[F, Json, FromServer] =
+    _.map(_.toStreamingMessage(id))
     
 
   def apply[F[_]: Logger: Concurrent](
-    service: GraphQLService[F],
     send: Option[FromServer] => F[Unit]
   ): F[Subscriptions[F]] =
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
 
-        def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
-          events => fromServerPipe(id, service)(events).evalMap(m => send(Some(m)))
+        def replySink(id: String): Pipe[F, Json, Unit] =
+          events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))
 
-        override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
+        override def add(id: String, events: Stream[F, Json]): F[Unit] =
           for {
             r <- SignallingRef(false)
             in = r.discrete.evalTap(v => debug(s"signalling ref = $v"))

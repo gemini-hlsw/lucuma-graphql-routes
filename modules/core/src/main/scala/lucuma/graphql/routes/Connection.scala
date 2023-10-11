@@ -253,7 +253,7 @@ object Connection {
 
               // User is authorized. Go.
               case Some(svc) =>
-                Subscriptions(svc, reply).flatMap(s => handle(_.reset(svc, reply, s)))
+                Subscriptions(reply).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>

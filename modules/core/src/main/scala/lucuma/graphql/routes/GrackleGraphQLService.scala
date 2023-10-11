@@ -46,14 +46,13 @@ class GrackleGraphQLService[F[_]: MonadThrow: Logger: Trace](
     Trace[F].span("graphql") {
       Trace[F].put("graphql.query" -> request.query.render) *>
       subscribe(request).compile.toList.map {
-        case List(e) => e
+        case List(e) => e.asRight
         case other   => GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")).asLeft
       }
     }
 
-  def subscribe(op: Operation): Stream[F, Either[Throwable, Json]] =
-    // HMM: we don't get throwables on the left anymore
-    mapping.interpreter.run(op.query, op.rootTpe, Env.EmptyEnv).evalMap(mapping.mkResponse).map(_.asRight)
+  def subscribe(op: Operation): Stream[F, Json] =
+    mapping.interpreter.run(op.query, op.rootTpe, Env.EmptyEnv).evalMap(mapping.mkResponse)
 
   def format(err: Throwable): F[GraphQLErrors] =
     Logger[F].error(err)("Error computing GraphQL response.")

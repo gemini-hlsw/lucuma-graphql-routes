@@ -16,7 +16,7 @@ trait GraphQLService[F[_]] {
 
   def query(request: Operation): F[Either[Throwable, Json]]
 
-  def subscribe(request: Operation): Stream[F, Either[Throwable, Json]]
+  def subscribe(request: Operation): Stream[F, Json]
 
   def format(err: Throwable): F[GraphQLErrors]
 
