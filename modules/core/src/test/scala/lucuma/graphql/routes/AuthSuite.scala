@@ -29,18 +29,17 @@ object AuthMapping extends CirceMapping[IO]:
     type Query { foo: Int }
     type Subscription { bar: Int }
   """
-  val QueryType = schema.ref("Query")
+  val QueryType        = schema.ref("Query")
   val SubscriptionType = schema.ref("Subscription")
-  val typeMappings: List[TypeMapping] =
-    List(
-      ObjectMapping(QueryType, List(
-        CursorFieldJson("foo", _ => Result.success(Json.fromInt(42)), Nil)
-      )),
-      ObjectMapping(SubscriptionType, List(
-        RootStream.computeJson("bar"): (path, env) =>
-          Stream(1, 2, 3).covary[IO].map(n => Result.success(Json.fromInt(n)))
-      ))
-    )
+  val typeMappings     = List(
+    ObjectMapping(QueryType, List(
+      CursorFieldJson("foo", _ => Result.success(Json.fromInt(42)), Nil)
+    )),
+    ObjectMapping(SubscriptionType, List(
+      RootStream.computeJson("bar"): (path, env) =>
+        Stream(1, 2, 3).covary[IO].map(n => Result.success(Json.fromInt(n)))
+    ))
+  )
 
 class AuthSuite extends BaseSuite:
 

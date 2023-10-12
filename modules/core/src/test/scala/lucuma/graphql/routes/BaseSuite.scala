@@ -35,6 +35,7 @@ import org.typelevel.log4cats.slf4j.Slf4jLogger
 import java.net.SocketException
 import scala.concurrent.duration.*
 
+// This is a stripped-down version of OdbSuite
 object BaseSuite:
 
   enum ClientOption:
@@ -56,16 +57,15 @@ object BaseSuite:
     val (scheduler, _) = IORuntime.createDefaultScheduler()
     IORuntime(compute, blocking, scheduler, () => (), IORuntimeConfig())
 
-// This is a stripped-down version of OdbSuite
 abstract class BaseSuite extends CatsEffectSuite:
+  import BaseSuite.ClientOption
 
+  /* Subclasses must implement. */
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]]
 
-  import BaseSuite.ClientOption
-  override given munitIoRuntime: IORuntime = BaseSuite.runtime
-
+  override lazy val munitIoRuntime: IORuntime = BaseSuite.runtime
   given ErrorPolicy.RaiseAlways.type = ErrorPolicy.RaiseAlways
-  given log: Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")  
+  given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")  
 
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
     Resource.pure(Routes.forService(service, _).orNotFound)
@@ -117,7 +117,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     val op = this.query(bearerToken, query, variables, client)
     expected.fold(
       errors  => op.intercept[ResponseException[Any]].map(_.errors.toList.map(_.message)).assertEquals(errors),
-      success => op.map(_.spaces2).assertEquals(success.spaces2) // by comparing strings we get more useful errors
+      success => op.map(_.spaces2).assertEquals(success.spaces2)
     )
 
   def query(
@@ -146,20 +146,14 @@ abstract class BaseSuite extends CatsEffectSuite:
           val req = conn.subscribe(Operation(query))
           variables.fold(req.apply)(req.withInput).allocated.flatMap: (sub, cleanup) =>
             for
-              _   <- log.info("*** ----- about to start stream fiber")
               fib <- sup.supervise(sub.compile.toList)
-              _   <- log.info("*** ----- pausing a bit")
               _   <- IO.sleep(1.second)
-              _   <- log.info("*** ----- running mutations")
               _   <- mutations.fold(_.traverse_ { case (query, vars) =>
                 val req = conn.request(Operation(query))
                 vars.fold(req.apply)(req.withInput)
               }, identity)
-              _   <- log.info("*** ----- pausing a bit")
               _   <- IO.sleep(1.second)
-              _   <- log.info("*** ----- stopping subscription")
               _   <- cleanup
-              _   <- log.info("*** ----- joining fiber")
               obt <- fib.joinWithNever
             yield obt
 
@@ -171,10 +165,8 @@ abstract class BaseSuite extends CatsEffectSuite:
     variables: Option[JsonObject]
   ) =
     subscription(bearerToken, query, mutations, variables).map: obt =>
-      // by comparing strings we get more useful errors
       assertEquals(obt.map(_.spaces2), expected.map(_.spaces2)) 
 
-  /** Ensure that exactly the specified errors are reported, in order. */
   def interceptGraphQL(messages: String*)(fa: IO[Any]): IO[Unit] =
     fa.attempt.flatMap:
       case Left(ResponseException(es, _)) => assertEquals(messages.toList, es.toList.map(_.message)).pure[IO]
