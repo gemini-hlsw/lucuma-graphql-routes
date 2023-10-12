@@ -3,19 +3,37 @@
 
 package lucuma.graphql
 
-import lucuma.graphql.routes.syntax.logger._
-import org.typelevel.log4cats.Logger
-import org.typelevel.log4cats.extras.LogLevel
+import cats.MonadThrow
+import cats.data.NonEmptyChain
+import cats.data.NonEmptyList
+import cats.syntax.all._
+import clue.model.GraphQLError
+import clue.model.StreamingMessage.FromServer
+import clue.model.*
+import edu.gemini.grackle.Problem
+import edu.gemini.grackle.Result
+import edu.gemini.grackle.Result.*
+import io.circe.Json
 
 package object routes {
 
-  def log[F[_]: Logger](level: LogLevel, s: => String): F[Unit] =
-    Logger[F].log(level, s)
+  def mkGraphqlError(p: Problem): GraphQLError =
+    GraphQLError(
+      p.message,
+      NonEmptyList.fromList(p.path.map(GraphQLError.PathElement.string)),
+      NonEmptyList.fromList(p.locations.map { case (x, y) => GraphQLError.Location(x, y) }),
+      p.extensions.map { obj => obj.toMap },
+    )
 
-  def debug[F[_]: Logger](s: => String): F[Unit] =
-    log(LogLevel.Debug, s)
+  def mkGraphqlErrors(problems: NonEmptyChain[Problem]): GraphQLErrors =
+    problems.toNonEmptyList.map(mkGraphqlError)
 
-  def info[F[_]: Logger](s: => String): F[Unit] =
-    log(LogLevel.Info, s)
+  def mkFromServer[F[_]: MonadThrow](r: Result[Json], id: String): F[Either[FromServer.Error, FromServer.Data]] =
+    r match {
+      case Success(json)      => FromServer.Data(id, GraphQLDataResponse(json)).asRight.pure[F]
+      case Warning(ps, json)  => FromServer.Data(id, GraphQLDataResponse(json, mkGraphqlErrors(ps).some)).asRight.pure[F]
+      case Failure(ps)        => FromServer.Error(id, mkGraphqlErrors(ps)).asLeft.pure[F]
+      case InternalError(err) => MonadThrow[F].raiseError(err)
+    }
 
 }

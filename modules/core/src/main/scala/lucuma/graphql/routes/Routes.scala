@@ -8,10 +8,10 @@ import cats.data.ValidatedNel
 import cats.effect._
 import cats.effect.std.Queue
 import cats.implicits._
-import clue.model.GraphQLErrors
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json._
+import edu.gemini.grackle.Result
 import fs2.Stream
 import io.circe._
 import io.circe.syntax._
@@ -74,7 +74,7 @@ object Routes {
 
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
-        debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
+        Logger[F].debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffGet(query, op, vars)
           case None    => Forbidden("Access denied.")
@@ -82,7 +82,7 @@ object Routes {
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / `graphQLPath` =>
-        debug(s"POST one off: request=$req") *>
+        Logger[F].debug(s"POST one off: request=$req") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffPost(req)
           case None    => Forbidden("Access denied.")
@@ -90,7 +90,7 @@ object Routes {
 
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
-        debug(s"GET web socket: $req") *>
+        Logger[F].debug(s"GET web socket: $req") *>
         new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
       // GraphQL Playground
@@ -107,16 +107,8 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
 
-  private def errorsToJson(errors: GraphQLErrors): Json = 
-    Json.obj(
-      "errors" -> errors.asJson
-    )
-
-  def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
-    result match {
-      case Left(err)   => Ok(service.format(err).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
-      case Right(json) => Ok(json)
-    }
+  def toResponse(result: Result[Json]): F[Response[F]] =
+    Ok(service.mapping.mkResponse(result))
 
   def oneOffGet(
     query: String,
@@ -124,21 +116,9 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
     vars0: Option[ValidatedNel[ParseFailure, JsonObject]]
   ): F[Response[F]] =
     vars0.sequence.fold(
-      errors =>
-        Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
-
-      vars   =>
-        service.parse(query, op, vars) match {
-          case Left(error) =>
-            Ok(service.format(error).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
-
-          case Right(op)  =>
-            for {
-              result <- service.query(op)
-              resp   <- toResponse(result)
-            } yield resp
-        }
-      )
+      errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
+      vars   => service.parse(query, op, vars).flatTraverse(service.query).flatMap(toResponse)
+    )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
     for {
@@ -168,8 +148,8 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
 
     def logFromServer(msg: FromServer): F[Unit] =
       msg match {
-        case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
-        case _                              => debug(s"Sending to client: ${trimmedMessage(msg)}")
+        case FromServer.ConnectionKeepAlive => Logger[F].debug(s"Sending ConnectionKeepAlive")
+        case _                              => Logger[F].debug(s"Sending to client: ${trimmedMessage(msg)}")
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -180,8 +160,8 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
       val RedactedAuth = """$1 <REDACTED>"""
 
       f match {
-        case Text(s, last) => debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-        case _             => debug(s"Received message from client: $f")
+        case Text(s, last) => Logger[F].debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+        case _             => Logger[F].debug(s"Received message from client: $f")
       }
     }
 
