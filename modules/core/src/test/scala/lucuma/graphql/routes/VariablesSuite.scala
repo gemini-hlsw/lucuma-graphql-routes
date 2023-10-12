@@ -5,7 +5,12 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
+import edu.gemini.grackle.Query.Binding
+import edu.gemini.grackle.QueryCompiler.Elab
+import edu.gemini.grackle.QueryCompiler.SelectElaborator
 import edu.gemini.grackle.Result
+import edu.gemini.grackle.Schema
+import edu.gemini.grackle.Value.StringValue
 import edu.gemini.grackle.circe.CirceMapping
 import edu.gemini.grackle.syntax.*
 import fs2.Stream
@@ -13,13 +18,9 @@ import io.circe.Json
 import io.circe.literal.*
 import natchez.Trace.Implicits.noop
 import org.http4s.headers.Authorization
+
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
-import edu.gemini.grackle.Schema
-import edu.gemini.grackle.QueryCompiler.SelectElaborator
-import edu.gemini.grackle.QueryCompiler.Elab
-import edu.gemini.grackle.Query.Binding
-import edu.gemini.grackle.Value.StringValue
 
 // This suite tests that variables make it through.
 
