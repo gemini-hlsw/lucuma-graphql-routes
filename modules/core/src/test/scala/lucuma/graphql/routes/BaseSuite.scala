@@ -48,6 +48,7 @@ object BaseSuite:
     case e if e.getMessage.startsWith("UNEXPECTED Error RECEIVED for subscription") => ()
     case e: IllegalArgumentException if e.getMessage == "statusCode" => ()
     case e: SocketException if e.getMessage == "Connection reset" => ()
+    case e: ResponseException[Any]  @unchecked => ()
     case e => print("OdbSuite.reportFailure: "); e.printStackTrace
 
   // a runtime that is constructed the same as global, but lets us see unhandled errors (above)
