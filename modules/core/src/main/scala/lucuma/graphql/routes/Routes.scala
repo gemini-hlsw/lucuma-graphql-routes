@@ -132,7 +132,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       resp   <- toResponse(result)
     } yield resp
 
-  }
+}
 
 class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
 
