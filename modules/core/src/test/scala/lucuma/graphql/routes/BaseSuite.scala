@@ -5,6 +5,8 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.effect.std.Supervisor
+import cats.effect.unsafe.IORuntime
+import cats.effect.unsafe.IORuntimeConfig
 import cats.implicits.*
 import clue.ErrorPolicy
 import clue.FetchClient
@@ -29,10 +31,9 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{ Uri => Http4sUri, _ }
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
-import scala.concurrent.duration.*
-import cats.effect.unsafe.IORuntime
-import cats.effect.unsafe.IORuntimeConfig
+
 import java.net.SocketException
+import scala.concurrent.duration.*
 
 object BaseSuite:
 

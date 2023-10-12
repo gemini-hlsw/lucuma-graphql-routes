@@ -5,20 +5,21 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
-import org.http4s.headers.Authorization
-import org.http4s.client.UnexpectedStatus
-import BaseSuite.ClientOption
-import BaseSuite.ClientOption.*
-import org.http4s.Credentials
-import org.http4s.AuthScheme
+import clue.DisconnectedException
+import edu.gemini.grackle.Result
+import edu.gemini.grackle.circe.CirceMapping
+import edu.gemini.grackle.syntax.*
+import fs2.Stream
 import io.circe.Json
 import io.circe.literal.*
-import clue.DisconnectedException
-import edu.gemini.grackle.syntax.*
 import natchez.Trace.Implicits.noop
-import edu.gemini.grackle.circe.CirceMapping
-import edu.gemini.grackle.Result
-import fs2.Stream
+import org.http4s.AuthScheme
+import org.http4s.Credentials
+import org.http4s.client.UnexpectedStatus
+import org.http4s.headers.Authorization
+
+import BaseSuite.ClientOption
+import BaseSuite.ClientOption.*
 
 // This suite tests that authorization headers are getting through correctly, and that
 // missing/rejected credentials result in http 403 errors (or disconnection for websockets).
