@@ -5,6 +5,7 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
+import clue.ResponseException
 import edu.gemini.grackle.circe.CirceMapping
 import edu.gemini.grackle.syntax.*
 import io.circe.Json
@@ -14,7 +15,6 @@ import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
-import clue.ResponseException
 
 // This suite tests that validation failures are raised appropriately.
 
