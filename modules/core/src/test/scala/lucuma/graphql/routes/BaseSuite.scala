@@ -148,12 +148,12 @@ abstract class BaseSuite extends CatsEffectSuite:
           variables.fold(req.apply)(req.withInput).allocated.flatMap: (sub, cleanup) =>
             for
               fib <- sup.supervise(sub.compile.toList)
-              _   <- IO.sleep(1.second)
+              _   <- IO.sleep(100.millis)
               _   <- mutations.fold(_.traverse_ { case (query, vars) =>
                 val req = conn.request(Operation(query))
                 vars.fold(req.apply)(req.withInput)
               }, identity)
-              _   <- IO.sleep(1.second)
+              _   <- IO.sleep(100.millis)
               _   <- cleanup
               obt <- fib.joinWithNever
             yield obt
