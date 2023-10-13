@@ -3,28 +3,47 @@
 
 package lucuma.graphql.routes
 
-import clue.model.GraphQLErrors
+import cats.MonadThrow
+import cats.data.NonEmptyChain
+import cats.syntax.all._
+import edu.gemini.grackle
+import edu.gemini.grackle.Mapping
+import edu.gemini.grackle.Operation
+import edu.gemini.grackle.Problem
+import edu.gemini.grackle.Result
+import fs2.Compiler
 import fs2.Stream
-import io.circe._
+import io.circe.Json
+import io.circe.JsonObject
+import natchez.Trace
 
-trait GraphQLService[F[_]] {
+class GraphQLService[F[_]: MonadThrow: Trace](
+  val mapping: Mapping[F],
+)(implicit ev: Compiler[F,F]) {
 
-  type Document
+  def isSubscription(op: Operation): Boolean =
+    mapping.schema.subscriptionType.exists(_ =:= op.rootTpe)
 
-  case class ParsedGraphQLRequest(
-    query: Document,
-    op:    Option[String],
-    vars:  Option[Json]
-  )
+  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
+    mapping.compiler.compile(query, op, vars.map(_.toJson))
 
-  def parse(query: String, op: Option[String]): Either[Throwable, Document]
+  def query(op: Operation): F[Result[Json]] =
+    Trace[F].span("graphql") {
+      Trace[F].put("graphql.query" -> op.query.render) *>
+      subscribe(op).compile.toList.map {
+        case List(e) => e
+        case other   => Result.internalError(GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")))
+      }
+    }
 
-  def isSubscription(doc: ParsedGraphQLRequest): Boolean
-
-  def query(request: ParsedGraphQLRequest): F[Either[Throwable, Json]]
-
-  def subscribe(request: ParsedGraphQLRequest): Stream[F, Either[Throwable, Json]]
-
-  def format(err: Throwable): F[GraphQLErrors]
+  def subscribe(op: Operation): Stream[F, Result[Json]] =
+    mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
 
 }
+
+case class GrackleException(problems: List[Problem]) extends Exception
+object GrackleException {
+  def apply(problems: NonEmptyChain[Problem]): GrackleException = apply(problems.toList)
+  def apply(problem: Problem): GrackleException = apply(List(problem))
+}
+

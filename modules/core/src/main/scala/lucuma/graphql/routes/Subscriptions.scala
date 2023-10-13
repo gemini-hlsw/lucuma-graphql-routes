@@ -11,6 +11,7 @@ import cats.effect.syntax.all._
 import cats.implicits._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
+import edu.gemini.grackle.Result
 import fs2.Pipe
 import fs2.Stream
 import fs2.concurrent.SignallingRef
@@ -25,7 +26,7 @@ trait Subscriptions[F[_]] {
    * @param id     client-provided id for the subscription
    * @param events stream of Either errors or Json results that match the subscription query
    */
-  def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit]
+  def add(id: String, events: Stream[F, Result[Json]]): F[Unit]
 
   /**
    * Removes a subscription so that it no longer provides events to the client.
@@ -39,8 +40,6 @@ trait Subscriptions[F[_]] {
 }
 
 object Subscriptions {
-
-  import syntax.json._
 
   /**
    * Tracks a single client subscription.
@@ -65,33 +64,30 @@ object Subscriptions {
 
   }
 
-  // Converts raw graphQL subscription events into FromServer messages.
-  private def fromServerPipe[F[_]](id: String, service: GraphQLService[F]): Pipe[F, Either[Throwable, Json], FromServer] =
-    _.flatMap {
-      case Left(err)   => Stream.eval(service.format(err)).map(errors => Error(id, errors))
-      case Right(json) => Stream(json.toStreamingMessage(id))
-    }
     
 
   def apply[F[_]: Logger: Concurrent](
-    service: GraphQLService[F],
-    send: Option[FromServer] => F[Unit]
+    send: Option[FromServer] => F[Unit],
+    mkResponse: Result[Json] => F[Json]
   ): F[Subscriptions[F]] =
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
 
-        def replySink(id: String): Pipe[F, Either[Throwable, Json], Unit] =
-          events => fromServerPipe(id, service)(events).evalMap(m => send(Some(m)))
+        def fromServerPipe(id: String): Pipe[F, Result[Json], FromServer] =
+          _.evalMap(mkFromServer(_, id).map(_.merge))
 
-        override def add(id: String, events: Stream[F, Either[Throwable, Json]]): F[Unit] =
+        def replySink(id: String): Pipe[F, Result[Json], Unit] =
+          events => fromServerPipe(id)(events).evalMap(m => send(Some(m)))
+
+        override def add(id: String, events: Stream[F, Result[Json]]): F[Unit] =
           for {
             r <- SignallingRef(false)
-            in = r.discrete.evalTap(v => debug(s"signalling ref = $v"))
+            in = r.discrete.evalTap(v => Logger[F].debug(s"signalling ref = $v"))
             es = events.through(replySink(id)).interruptWhen(in)
-            _ <- debug(s"starting event stream $id")
+            _ <- Logger[F].debug(s"starting event stream $id")
             f <- es.compile.drain.start
-            _ <- debug(s"started event stream $id")
+            _ <- Logger[F].debug(s"started event stream $id")
             _ <- subscriptions.update(_.updated(id, new Subscription(id, f, r)))
           } yield ()
 

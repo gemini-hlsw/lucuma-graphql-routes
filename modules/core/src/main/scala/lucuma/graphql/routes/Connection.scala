@@ -4,6 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.MonadError
+import cats.MonadThrow
 import cats.data.NonEmptyList
 import cats.effect.Concurrent
 import cats.effect.Ref
@@ -14,9 +15,11 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
-import io.circe.Encoder
+import edu.gemini.grackle.Operation
+import edu.gemini.grackle.Result._
 import io.circe.Json
-import io.circe.syntax._
+import io.circe.JsonObject
+import lucuma.graphql.routes.mkGraphqlError
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
@@ -37,8 +40,6 @@ sealed trait Connection[F[_]] {
 }
 
 object Connection {
-
-  import syntax.json._
 
   /**
    * Connection is a state machine that (typically) transitions from states `PendingInit` to
@@ -62,7 +63,7 @@ object Connection {
      * Starts a Graph QL operation associated with a particular id.
      * @return state transition and action to execute
      */
-    def start[V: Encoder](id:  String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit])
+    def start(id:  String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit])
 
     /**
      * Terminates a Graph QL subscription associated with a particular id
@@ -106,12 +107,12 @@ object Connection {
       private def doClose(m: String): (ConnectionState[F], F[Unit]) =
         (closed,
          for {
-           _ <- debug(s"Request received on un-initialized connection: $m. Closing.")
+           _ <- Logger[F].debug(s"Request received on un-initialized connection: $m. Closing.")
            _ <- replyQueue.offer(None)
          } yield ()
         )
 
-      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
         doClose(s"start($id, $req)")
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -129,15 +130,13 @@ object Connection {
    * Connected state. Post-initialization, we stay in the `Connected` state until explicitly
    * terminated by the client.
    */
-  def connected[F[_]: Logger](
-    service:    GraphQLService[F],
+  def connected[F[_]: Logger: MonadThrow](
+    service:       GraphQLService[F],
     send:          Option[FromServer] => F[Unit],
     subscriptions: Subscriptions[F]
-  )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
+  ): ConnectionState[F] =
 
     new ConnectionState[F] {
-
-      import service.ParsedGraphQLRequest
 
       override def reset(
         service: GraphQLService[F],
@@ -150,20 +149,15 @@ object Connection {
             r(Some(ConnectionKeepAlive))
         )
 
-      override def start[V: Encoder](id: String, raw: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) = {
-
-        val parseResult =
-          service
-            .parse(raw.query, raw.operationName)
-            .map(ParsedGraphQLRequest(_, raw.operationName, raw.variables.map(_.asJson)))
-
+      override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
+        val parseResult = service.parse(raw.query, raw.operationName, raw.variables)
         val action = parseResult match {
-          case Left(err)  => service.format(err).flatMap { errors => send(Some(Error(id, errors))) }
-          case Right(req) => if (service.isSubscription(req)) subscribe(id, req) else execute(id, req)
+          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op)
+          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op) // n.b. warnings on subscribe are lost
+          case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).some)
+          case InternalError(err) => err.raiseError[F, Unit]
         }
-
         (this, action)
-
       }
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -172,17 +166,16 @@ object Connection {
       override val stopAll: (ConnectionState[F], F[Unit]) =
         (this, subscriptions.removeAll)
 
-      def subscribe(id: String, request: ParsedGraphQLRequest): F[Unit] =
+      def subscribe(id: String, request: Operation): F[Unit] =
         subscriptions.add(id, service.subscribe(request))
 
-      def execute(id: String, request: ParsedGraphQLRequest): F[Unit] =
-        for {
-          r <- service.query(request)
-          _ <- r.fold(
-                 err  => service.format(err).flatMap(errors => send(Some(Error(id, errors)))),
-                 json => send(Some(json.toStreamingMessage(id))) *> send(Some(Complete(id)))
-               )
-        } yield ()
+      def execute(id: String, request: Operation): F[Unit] =
+        service.query(request).flatMap { r =>
+          mkFromServer(r, id).flatMap {
+            case Right(data) => send(data.some) *> send(Complete(id).some)
+            case Left(error) => send(error.some)
+          }
+        }
 
       override val close: (ConnectionState[F], F[Unit]) =
         (closed, subscriptions.removeAll *> send(None))
@@ -203,7 +196,7 @@ object Connection {
       ): (ConnectionState[F], F[Unit]) =
         raiseError
 
-      override def start[V: Encoder](id: String, req: GraphQLRequest[V]): (ConnectionState[F], F[Unit]) =
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
         raiseError
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -252,7 +245,7 @@ object Connection {
           val reply: Option[FromServer] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
-              _ <- debug(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+              _ <- Logger[F].debug(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
             } yield ()
           }
 
@@ -262,7 +255,7 @@ object Connection {
 
               // User is authorized. Go.
               case Some(svc) =>
-                Subscriptions(svc, reply).flatMap(s => handle(_.reset(svc, reply, s)))
+                Subscriptions(reply, svc.mapping.mkResponse).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>

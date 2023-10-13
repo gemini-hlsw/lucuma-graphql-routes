@@ -8,10 +8,10 @@ import cats.data.ValidatedNel
 import cats.effect._
 import cats.effect.std.Queue
 import cats.implicits._
-import clue.model.GraphQLErrors
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json._
+import edu.gemini.grackle.Result
 import fs2.Stream
 import io.circe._
 import io.circe.syntax._
@@ -53,13 +53,16 @@ object Routes {
     val dsl = new Http4sDsl[F]{}
     import dsl._
 
-    implicit val jsonQPDecoder: QueryParamDecoder[Json] = QueryParamDecoder[String].emap { s =>
-      parser.parse(s).leftMap { case ParsingFailure(msg, _) => ParseFailure("Invalid variables", msg) }
+    implicit val jsonQPDecoder: QueryParamDecoder[JsonObject] = QueryParamDecoder[String].emap { s =>
+      parser.parse(s) match { 
+        case Left(ParsingFailure(msg, _)) => Left(ParseFailure("Invalid variables", msg))
+        case Right(json) => json.asObject.toRight(ParseFailure("Expected JsonObject", json.spaces2))
+      }
     }
 
     object QueryMatcher         extends QueryParamDecoderMatcher[String]("query")
     object OperationNameMatcher extends OptionalQueryParamDecoderMatcher[String]("operationName")
-    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[Json]("variables")
+    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("variables")
 
     def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
       Nested(service(req.headers.get[Authorization])).map(new HttpRouteHandler(_)).value
@@ -71,7 +74,7 @@ object Routes {
 
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
-        debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
+        Logger[F].debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffGet(query, op, vars)
           case None    => Forbidden("Access denied.")
@@ -79,7 +82,7 @@ object Routes {
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / `graphQLPath` =>
-        debug(s"POST one off: request=$req") *>
+        Logger[F].debug(s"POST one off: request=$req") *>
         handler(req).flatMap {
           case Some(h) => h.oneOffPost(req)
           case None    => Forbidden("Access denied.")
@@ -87,7 +90,7 @@ object Routes {
 
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
-        debug(s"GET web socket: $req") *>
+        Logger[F].debug(s"GET web socket: $req") *>
         new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
       // GraphQL Playground
@@ -101,46 +104,21 @@ object Routes {
 
 class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
-  import service.{ Document, ParsedGraphQLRequest }
-
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
 
-  private def errorsToJson(errors: GraphQLErrors): Json = 
-    Json.obj(
-      "errors" -> errors.asJson
-    )
-
-  def toResponse(result: Either[Throwable, Json]): F[Response[F]] =
-    result match {
-      case Left(err)   => Ok(service.format(err).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
-      case Right(json) => Ok(json)
-    }
-
-  private def parse(query: String, op: Option[String]): Either[Throwable, Document] =
-    service.parse(query, op)
+  def toResponse(result: Result[Json]): F[Response[F]] =
+    Ok(service.mapping.mkResponse(result))
 
   def oneOffGet(
     query: String,
     op:    Option[String],
-    vars0: Option[ValidatedNel[ParseFailure, Json]]
+    vars0: Option[ValidatedNel[ParseFailure, JsonObject]]
   ): F[Response[F]] =
     vars0.sequence.fold(
-      errors =>
-        Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
-
-      vars   =>
-        parse(query, op) match {
-          case Left(error) =>
-            Ok(service.format(error).map(errorsToJson)) // in GraphQL errors are reported in a 200 Ok response (!)
-
-          case Right(ast)  =>
-            for {
-              result <- service.query(ParsedGraphQLRequest(ast, op, vars))
-              resp   <- toResponse(result)
-            } yield resp
-        }
-      )
+      errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
+      vars   => service.parse(query, op, vars).flatTraverse(service.query).flatMap(toResponse)
+    )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
     for {
@@ -148,13 +126,13 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
       op     =  obj("operationName").flatMap(_.asString)
-      vars   =  obj("variables")
-      parsed = parse(query, op).map(ParsedGraphQLRequest(_, op, vars))
+      vars   =  obj("variables").flatMap(_.asObject)
+      parsed =  service.parse(query, op, vars)
       result <- parsed.traverse(service.query).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
 
-  }
+}
 
 class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
 
@@ -170,8 +148,8 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
 
     def logFromServer(msg: FromServer): F[Unit] =
       msg match {
-        case FromServer.ConnectionKeepAlive => debug(s"Sending ConnectionKeepAlive")
-        case _                              => debug(s"Sending to client: ${trimmedMessage(msg)}")
+        case FromServer.ConnectionKeepAlive => Logger[F].debug(s"Sending ConnectionKeepAlive")
+        case _                              => Logger[F].debug(s"Sending to client: ${trimmedMessage(msg)}")
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -182,8 +160,8 @@ class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F
       val RedactedAuth = """$1 <REDACTED>"""
 
       f match {
-        case Text(s, last) => debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-        case _             => debug(s"Received message from client: $f")
+        case Text(s, last) => Logger[F].debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
+        case _             => Logger[F].debug(s"Received message from client: $f")
       }
     }
 
