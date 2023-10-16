@@ -15,8 +15,8 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.FromClient._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
-import edu.gemini.grackle.Operation
-import edu.gemini.grackle.Result._
+import grackle.Operation
+import grackle.Result._
 import io.circe.Json
 import io.circe.JsonObject
 import lucuma.graphql.routes.mkGraphqlError

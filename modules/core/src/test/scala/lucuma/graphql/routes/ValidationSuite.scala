@@ -6,8 +6,8 @@ package lucuma.graphql.routes
 import cats.effect.*
 import cats.implicits.*
 import clue.ResponseException
-import edu.gemini.grackle.circe.CirceMapping
-import edu.gemini.grackle.syntax.*
+import grackle.circe.CirceMapping
+import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
 import natchez.Trace.Implicits.noop

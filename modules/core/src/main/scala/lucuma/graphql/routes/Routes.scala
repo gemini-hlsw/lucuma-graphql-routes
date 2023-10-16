@@ -11,8 +11,8 @@ import cats.implicits._
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json._
-import edu.gemini.grackle.Result
 import fs2.Stream
+import grackle.Result
 import io.circe._
 import io.circe.syntax._
 import org.http4s.Header

@@ -6,10 +6,10 @@ package lucuma.graphql.routes
 import cats.effect.*
 import cats.implicits.*
 import clue.DisconnectedException
-import edu.gemini.grackle.Result
-import edu.gemini.grackle.circe.CirceMapping
-import edu.gemini.grackle.syntax.*
 import fs2.Stream
+import grackle.Result
+import grackle.circe.CirceMapping
+import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
 import natchez.Trace.Implicits.noop
