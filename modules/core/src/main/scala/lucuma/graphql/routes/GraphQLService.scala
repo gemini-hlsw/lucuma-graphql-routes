@@ -6,13 +6,12 @@ package lucuma.graphql.routes
 import cats.MonadThrow
 import cats.data.NonEmptyChain
 import cats.syntax.all._
-import edu.gemini.grackle
-import edu.gemini.grackle.Mapping
-import edu.gemini.grackle.Operation
-import edu.gemini.grackle.Problem
-import edu.gemini.grackle.Result
 import fs2.Compiler
 import fs2.Stream
+import grackle.Mapping
+import grackle.Operation
+import grackle.Problem
+import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
 import natchez.Trace

@@ -10,9 +10,9 @@ import cats.syntax.all._
 import clue.model.GraphQLError
 import clue.model.StreamingMessage.FromServer
 import clue.model.*
-import edu.gemini.grackle.Problem
-import edu.gemini.grackle.Result
-import edu.gemini.grackle.Result.*
+import grackle.Problem
+import grackle.Result
+import grackle.Result.*
 import io.circe.Json
 
 package object routes {

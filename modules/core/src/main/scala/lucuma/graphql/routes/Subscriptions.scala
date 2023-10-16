@@ -11,10 +11,10 @@ import cats.effect.syntax.all._
 import cats.implicits._
 import clue.model.StreamingMessage.FromServer._
 import clue.model.StreamingMessage._
-import edu.gemini.grackle.Result
 import fs2.Pipe
 import fs2.Stream
 import fs2.concurrent.SignallingRef
+import grackle.Result
 import io.circe.Json
 import org.typelevel.log4cats.Logger
 
