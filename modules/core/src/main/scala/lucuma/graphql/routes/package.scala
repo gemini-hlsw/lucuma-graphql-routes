@@ -14,6 +14,7 @@ import grackle.Problem
 import grackle.Result
 import grackle.Result.*
 import io.circe.Json
+import cats.data.Ior
 
 package object routes {
 
@@ -30,8 +31,8 @@ package object routes {
 
   def mkFromServer[F[_]: MonadThrow](r: Result[Json], id: String): F[Either[FromServer.Error, FromServer.Data]] =
     r match {
-      case Success(json)      => FromServer.Data(id, GraphQLDataResponse(json)).asRight.pure[F]
-      case Warning(ps, json)  => FromServer.Data(id, GraphQLDataResponse(json, mkGraphqlErrors(ps).some)).asRight.pure[F]
+      case Success(json)      => FromServer.Data(id, GraphQLResponse(Ior.right(json))).asRight.pure[F]
+      case Warning(ps, json)  => FromServer.Data(id, GraphQLResponse(Ior.both(mkGraphqlErrors(ps), json))).asRight.pure[F]
       case Failure(ps)        => FromServer.Error(id, mkGraphqlErrors(ps)).asLeft.pure[F]
       case InternalError(err) => MonadThrow[F].raiseError(err)
     }
