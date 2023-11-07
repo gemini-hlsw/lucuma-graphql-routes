@@ -5,15 +5,15 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
-import edu.gemini.grackle.Query.Binding
-import edu.gemini.grackle.QueryCompiler.Elab
-import edu.gemini.grackle.QueryCompiler.SelectElaborator
-import edu.gemini.grackle.Result
-import edu.gemini.grackle.Schema
-import edu.gemini.grackle.Value.StringValue
-import edu.gemini.grackle.circe.CirceMapping
-import edu.gemini.grackle.syntax.*
 import fs2.Stream
+import grackle.Query.Binding
+import grackle.QueryCompiler.Elab
+import grackle.QueryCompiler.SelectElaborator
+import grackle.Result
+import grackle.Schema
+import grackle.Value.StringValue
+import grackle.circe.CirceMapping
+import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
 import natchez.Trace.Implicits.noop
