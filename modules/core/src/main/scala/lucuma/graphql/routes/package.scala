@@ -15,7 +15,6 @@ import grackle.Problem
 import grackle.Result
 import grackle.Result.*
 import io.circe.Json
-import cats.data.Ior
 
 package object routes {
 
