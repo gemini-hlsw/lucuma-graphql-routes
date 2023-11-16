@@ -54,7 +54,7 @@ object Routes {
     import dsl._
 
     implicit val jsonQPDecoder: QueryParamDecoder[JsonObject] = QueryParamDecoder[String].emap { s =>
-      parser.parse(s) match { 
+      parser.parse(s) match {
         case Left(ParsingFailure(msg, _)) => Left(ParseFailure("Invalid variables", msg))
         case Right(json) => json.asObject.toRight(ParseFailure("Expected JsonObject", json.spaces2))
       }
@@ -67,8 +67,8 @@ object Routes {
     def handler(req: Request[F]): F[Option[HttpRouteHandler[F]]] =
       Nested(service(req.headers.get[Authorization])).map(new HttpRouteHandler(_)).value
 
-    val playground: F[Response[F]] =
-      Ok(Playground(graphQLPath, wsPath)).map(_.withContentType(`Content-Type`(MediaType.text.html)))
+    def playground(rootPath: Path): F[Response[F]] =
+      Ok(Playground((rootPath / graphQLPath).toString, (rootPath / wsPath).toString)).map(_.withContentType(`Content-Type`(MediaType.text.html)))
 
     HttpRoutes.of[F] {
 
@@ -94,8 +94,8 @@ object Routes {
         new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
       // GraphQL Playground
-      case GET -> Root / `playgroundPath` =>
-        playground
+      case req @ GET -> Root / `playgroundPath` =>
+        playground(Path(req.uri.path.segments.dropRight(Path.unsafeFromString(playgroundPath).segments.length)).toAbsolute)
 
     }
   }

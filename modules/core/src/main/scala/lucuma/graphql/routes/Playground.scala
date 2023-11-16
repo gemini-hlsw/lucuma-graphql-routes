@@ -62,8 +62,8 @@ object Playground {
         |  <script>window.addEventListener('load', function (event) {
         |      GraphQLPlayground.init(document.getElementById('root'), {
         |        // options as 'endpoint' belong here
-        |        'endpoint': '/$graphQLPath',
-        |        'subscriptionEndpoint': '/$wsPath'
+        |        'endpoint': '$graphQLPath',
+        |        'subscriptionEndpoint': '$wsPath'
         |      })
         |    })</script>
         |</body>
