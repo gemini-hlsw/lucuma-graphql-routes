@@ -5,7 +5,7 @@ package lucuma.graphql.routes
 
 import cats.MonadThrow
 import cats.data.NonEmptyChain
-import cats.syntax.all._
+import cats.syntax.all.*
 import fs2.Compiler
 import fs2.Stream
 import grackle.Mapping

@@ -5,16 +5,16 @@ package lucuma.graphql.routes
 
 import cats.data.Nested
 import cats.data.ValidatedNel
-import cats.effect._
+import cats.effect.*
 import cats.effect.std.Queue
-import cats.implicits._
+import cats.implicits.*
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
-import clue.model.json._
+import clue.model.json.*
 import fs2.Stream
 import grackle.Result
-import io.circe._
-import io.circe.syntax._
+import io.circe.*
+import io.circe.syntax.*
 import org.http4s.Header
 import org.http4s.Headers
 import org.http4s.HttpRoutes
@@ -24,7 +24,7 @@ import org.http4s.ParseFailure
 import org.http4s.QueryParamDecoder
 import org.http4s.Request
 import org.http4s.Response
-import org.http4s.circe._
+import org.http4s.circe.*
 import org.http4s.dsl.Http4sDsl
 import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
@@ -35,7 +35,7 @@ import org.http4s.websocket.WebSocketFrame.Text
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
 
-import scala.concurrent.duration._
+import scala.concurrent.duration.*
 
 object Routes {
 

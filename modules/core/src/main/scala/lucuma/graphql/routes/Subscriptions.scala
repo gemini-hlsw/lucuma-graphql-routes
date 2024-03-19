@@ -7,10 +7,10 @@ import cats.Monad
 import cats.effect.Concurrent
 import cats.effect.Fiber
 import cats.effect.Ref
-import cats.effect.syntax.all._
-import cats.implicits._
-import clue.model.StreamingMessage.FromServer._
-import clue.model.StreamingMessage._
+import cats.effect.syntax.all.*
+import cats.implicits.*
+import clue.model.StreamingMessage.*
+import clue.model.StreamingMessage.FromServer.*
 import fs2.Pipe
 import fs2.Stream
 import fs2.concurrent.SignallingRef
