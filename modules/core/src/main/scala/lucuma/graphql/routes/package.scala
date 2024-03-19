@@ -7,10 +7,10 @@ import cats.MonadThrow
 import cats.data.Ior
 import cats.data.NonEmptyChain
 import cats.data.NonEmptyList
-import cats.syntax.all._
+import cats.syntax.all.*
+import clue.model.*
 import clue.model.GraphQLError
 import clue.model.StreamingMessage.FromServer
-import clue.model.*
 import grackle.Problem
 import grackle.Result
 import grackle.Result.*

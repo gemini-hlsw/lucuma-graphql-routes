@@ -28,7 +28,7 @@ import org.http4s.jdkhttpclient.JdkHttpClient
 import org.http4s.jdkhttpclient.JdkWSClient
 import org.http4s.server.Server
 import org.http4s.server.websocket.WebSocketBuilder2
-import org.http4s.{ Uri => Http4sUri, _ }
+import org.http4s.{ Uri as Http4sUri, * }
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 
