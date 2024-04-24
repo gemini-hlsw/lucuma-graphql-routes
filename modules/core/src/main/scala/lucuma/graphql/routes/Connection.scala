@@ -155,7 +155,7 @@ object Connection {
           case Success(op)        => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op)
           case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op) // n.b. warnings on subscribe are lost
           case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).some)
-          case InternalError(err) => err.raiseError[F, Unit]
+          case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).some)
         }
         (this, action)
       }
