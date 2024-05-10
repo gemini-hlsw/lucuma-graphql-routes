@@ -23,7 +23,7 @@ object ValidationMapping extends CirceMapping[IO]:
     type Query { foo: Int }
     type Subscription { bar: Int }
   """
-  val typeMappings = Nil
+  val typeMappings = TypeMappings.unsafe()
 
 class ValidationSuite extends BaseSuite:
 

@@ -35,7 +35,7 @@ object VariablesMapping extends CirceMapping[IO]:
   """
   val QueryType        = schema.ref("Query")
   val SubscriptionType = schema.ref("Subscription")
-  val typeMappings     = List(
+  val typeMappings     = TypeMappings.unsafe(
     ObjectMapping(QueryType, List(
       CursorFieldJson("echo", c => c.envR[String]("s").map(Json.fromString), Nil)
     )),
