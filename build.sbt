@@ -6,7 +6,7 @@ val grackleVersion             = "0.19.0"
 val http4sVersion              = "0.23.27"
 val kindProjectorVersion       = "0.13.2"
 val log4catsVersion            = "2.7.0"
-val munitCatsEffectVersion     = "1.0.7"
+val munitCatsEffectVersion     = "2.0.0"
 val munitVersion               = "0.7.29"
 val natchezVersion             = "0.3.5"
 val http4sBlazeVersion         = "0.23.16"
@@ -42,6 +42,6 @@ lazy val core = project
       "org.scalameta"  %% "munit"                  % munitVersion               % Test,
       "org.typelevel"  %% "grackle-circe"          % grackleVersion             % Test,
       "org.typelevel"  %% "log4cats-slf4j"         % log4catsVersion            % Test,
-      "org.typelevel"  %% "munit-cats-effect-3"    % munitCatsEffectVersion     % Test,
+      "org.typelevel"  %% "munit-cats-effect"    % munitCatsEffectVersion     % Test,
     ),
   )
