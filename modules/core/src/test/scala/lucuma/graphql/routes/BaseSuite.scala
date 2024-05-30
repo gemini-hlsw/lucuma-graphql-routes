@@ -22,6 +22,7 @@ import io.circe.Encoder
 import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
+import munit.catseffect.IOFixture
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
@@ -95,7 +96,7 @@ abstract class BaseSuite extends CatsEffectSuite:
       _   <- Resource.make(sc.connect() *> sc.initialize(ps))(_ => sc.terminate() *> sc.disconnect())
     yield sc
 
-  private lazy val serverFixture: Fixture[Server] =
+  private lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)
 
   override def munitFixtures = 
@@ -173,4 +174,3 @@ abstract class BaseSuite extends CatsEffectSuite:
       case Left(ResponseException(es, _)) => assertEquals(messages.toList, es.toList.map(_.message)).pure[IO]
       case Left(other)                    => IO.raiseError(other)
       case Right(a)                       => fail(s"Expected failure, got $a")
-
