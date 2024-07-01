@@ -83,7 +83,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     for
       xbe <- JdkHttpClient.simple[IO].map(Http4sHttpBackend[IO](_))
       uri  = svr.baseUri / "graphql"
-      hs   = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s))): _*)
+      hs   = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
       xc  <- Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(Async[IO], xbe, Logger[IO])
     yield xc
 
@@ -91,7 +91,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     for
       sbe <- Resource.eval(JdkWSClient.simple[IO].map(Http4sWebSocketBackend[IO](_)))
       uri  = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
-      sc  <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(Async[IO], Logger[IO], sbe))
+      sc  <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(using Async[IO], Logger[IO], sbe))
       ps   = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
       _   <- Resource.make(sc.connect() *> sc.initialize(ps))(_ => sc.terminate() *> sc.disconnect())
     yield sc
