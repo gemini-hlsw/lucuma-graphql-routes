@@ -5,7 +5,7 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
-import clue.DisconnectedException
+import clue.RemoteInitializationException
 import fs2.Stream
 import grackle.Result
 import grackle.circe.CirceMapping
@@ -75,20 +75,20 @@ class AuthSuite extends BaseSuite:
   test("[http] Correct credentials should work."):
     testQuery(Some("bob"), Http)
 
-  test("[ws, one-off] Missing credentials should raise DisconnectedException."):
-    interceptIO[DisconnectedException](testQuery(None, Ws))
+  test("[ws, one-off] Missing credentials should raise RemoteInitializationException."):
+    interceptIO[RemoteInitializationException](testQuery(None, Ws))
 
-  test("[ws, one-off] Incorrect credentials should raise DisconnectedException."):
-    interceptIO[DisconnectedException](testQuery(Some("steve"), Ws))
+  test("[ws, one-off] Incorrect credentials should raise RemoteInitializationException."):
+    interceptIO[RemoteInitializationException](testQuery(Some("steve"), Ws))
 
   test("[ws, one-off] Correct credentials should work."):
     testQuery(Some("bob"), Ws)
   
-  test("[ws, subscription] Missing credentials should raise DisconnectedException."):
-    interceptIO[DisconnectedException](testSubscription(None))
+  test("[ws, subscription] Missing credentials should raise RemoteInitializationException."):
+    interceptIO[RemoteInitializationException](testSubscription(None))
 
-  test("[ws, subscription] Incorrect credentials should raise DisconnectedException."):
-    interceptIO[DisconnectedException](testSubscription(Some("steve")))
+  test("[ws, subscription] Incorrect credentials should raise RemoteInitializationException."):
+    interceptIO[RemoteInitializationException](testSubscription(Some("steve")))
 
   test("[ws, subscription] Correct credentials should work."):
     testSubscription(Some("bob"))
