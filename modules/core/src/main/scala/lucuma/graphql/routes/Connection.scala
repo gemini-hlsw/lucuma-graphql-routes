@@ -15,10 +15,12 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromClient.*
 import clue.model.StreamingMessage.FromServer.*
+import clue.model.json.*
 import grackle.Operation
 import grackle.Result.*
 import io.circe.Json
 import io.circe.JsonObject
+import io.circe.syntax.*
 import lucuma.graphql.routes.mkGraphqlError
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
@@ -259,7 +261,7 @@ object Connection {
 
               // User has insufficient privileges to connect.
               case None =>
-                reply(Some(FromServer.Error("<none>", NonEmptyList.one(GraphQLError("Not authorized."))))) *>
+                reply(Some(FromServer.ConnectionError(GraphQLError("Not authorized.").asJsonObject))) *>
                 handle(_.close)
 
             }
