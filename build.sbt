@@ -1,6 +1,6 @@
 val clueVersion                = "0.40.0"
 val fs2Version                 = "3.2.7"
-val grackleVersion             = "0.21.0"
+val grackleVersion             = "0.22.0"
 val http4sVersion              = "0.23.28"
 val kindProjectorVersion       = "0.13.2"
 val log4catsVersion            = "2.7.0"
