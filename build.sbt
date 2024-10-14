@@ -1,6 +1,6 @@
 val clueVersion                = "0.40.0"
 val fs2Version                 = "3.2.7"
-val grackleVersion             = "0.21.0"
+val grackleVersion             = "0.22.0"
 val http4sVersion              = "0.23.28"
 val kindProjectorVersion       = "0.13.2"
 val log4catsVersion            = "2.7.0"
@@ -9,7 +9,7 @@ val munitVersion               = "1.0.2"
 val natchezVersion             = "0.3.6"
 val http4sBlazeVersion         = "0.23.16"
 val http4sJdkHttpClientVersion = "0.9.1"
-val logbackVersion             = "1.5.9"
+val logbackVersion             = "1.5.10"
 val circeVersion               = "0.14.10"
 
 enablePlugins(NoPublishPlugin)
