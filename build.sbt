@@ -9,7 +9,7 @@ val munitVersion               = "1.0.3"
 val natchezVersion             = "0.3.7"
 val http4sBlazeVersion         = "0.23.17"
 val http4sJdkHttpClientVersion = "0.9.2"
-val logbackVersion             = "1.5.12"
+val logbackVersion             = "1.5.13"
 val circeVersion               = "0.14.10"
 
 enablePlugins(NoPublishPlugin)
