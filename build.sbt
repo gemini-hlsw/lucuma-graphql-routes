@@ -8,7 +8,7 @@ val munitCatsEffectVersion     = "2.0.0"
 val munitVersion               = "1.0.3"
 val natchezVersion             = "0.3.7"
 val http4sBlazeVersion         = "0.23.17"
-val http4sJdkHttpClientVersion = "0.9.2"
+val http4sJdkHttpClientVersion = "0.10.0"
 val logbackVersion             = "1.5.16"
 val circeVersion               = "0.14.10"
 
