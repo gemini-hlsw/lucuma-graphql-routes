@@ -8,7 +8,6 @@ import cats.effect.std.Supervisor
 import cats.effect.unsafe.IORuntime
 import cats.effect.unsafe.IORuntimeConfig
 import cats.implicits.*
-import clue.ErrorPolicy
 import clue.FetchClient
 import clue.GraphQLOperation
 import clue.ResponseException
@@ -66,8 +65,7 @@ abstract class BaseSuite extends CatsEffectSuite:
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]]
 
   override lazy val munitIoRuntime: IORuntime = BaseSuite.runtime
-  given ErrorPolicy.RaiseAlways.type = ErrorPolicy.RaiseAlways
-  given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")  
+  given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")
 
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
     Resource.pure(Routes.forService(service, _).orNotFound)
@@ -79,17 +77,17 @@ abstract class BaseSuite extends CatsEffectSuite:
         .bindAny()
         .resource
 
-  private def transactionalClient(bearerToken: Option[String])(svr: Server): IO[FetchClient[IO, Nothing]] =
+  private def fetchClient(bearerToken: Option[String])(svr: Server): Resource[IO, FetchClient[IO, Nothing]] =
     for
       xbe <- JdkHttpClient.simple[IO].map(Http4sHttpBackend[IO](_))
       uri  = svr.baseUri / "graphql"
       hs   = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
-      xc  <- Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(Async[IO], xbe, Logger[IO])
+      xc  <- Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(Async[IO], xbe, Logger[IO]))
     yield xc
 
   private def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
     for
-      sbe <- Resource.eval(JdkWSClient.simple[IO].map(Http4sWebSocketBackend[IO](_)))
+      sbe <- JdkWSClient.simple[IO].map(Http4sWebSocketBackend[IO](_))
       uri  = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
       sc  <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(using Async[IO], Logger[IO], sbe))
       ps   = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
@@ -106,7 +104,7 @@ abstract class BaseSuite extends CatsEffectSuite:
 
   def connection(cop: ClientOption, bearerToken: Option[String]): Server => Resource[IO, FetchClient[IO, Nothing]] =
     cop match
-      case ClientOption.Http => s => Resource.eval(transactionalClient(bearerToken)(s))
+      case ClientOption.Http => s => fetchClient(bearerToken)(s)
       case ClientOption.Ws   => streamingClient(bearerToken)
 
   def expect(
@@ -132,32 +130,39 @@ abstract class BaseSuite extends CatsEffectSuite:
       .flatMap(connection(client, bearerToken))
       .use: conn =>
         val req = conn.request(Operation(query))
-        val op  = variables.fold(req.apply)(req.withInput)
+        val op  = 
+            variables.fold(req.apply)(req.withInput).raiseGraphQLErrors
         op
 
   def subscription(
     bearerToken: Option[String], 
     query: String, 
     mutations: Either[List[(String, Option[JsonObject])], IO[Any]], 
-    variables: Option[JsonObject]
+    variables: Option[JsonObject],
+    onError: ResponseException[Json] => IO[Unit] = _ => IO.unit
   ): IO[List[Json]] =
     Supervisor[IO].use: sup =>
       Resource.eval(IO(serverFixture()))
         .flatMap(streamingClient(bearerToken))
         .use: conn =>
           val req = conn.subscribe(Operation(query))
-          variables.fold(req.apply)(req.withInput).allocated.flatMap: (sub, cleanup) =>
-            for
-              fib <- sup.supervise(sub.compile.toList)
-              _   <- IO.sleep(100.millis)
-              _   <- mutations.fold(_.traverse_ { case (query, vars) =>
-                val req = conn.request(Operation(query))
-                vars.fold(req.apply)(req.withInput)
-              }, identity)
-              _   <- IO.sleep(100.millis)
-              _   <- cleanup
-              obt <- fib.joinWithNever
-            yield obt
+          variables
+            .fold(req.apply)(req.withInput)
+            .raiseFirstNoDataError
+            .handleGraphQLErrors(onError)
+            .allocated
+            .flatMap: (sub, cleanup) =>
+              for
+                fib <- sup.supervise(sub.compile.toList)
+                _   <- IO.sleep(100.millis)
+                _   <- mutations.fold(_.traverse_ { case (query, vars) =>
+                  val req = conn.request(Operation(query))
+                  vars.fold(req.apply)(req.withInput)
+                }, identity)
+                _   <- IO.sleep(100.millis)
+                _   <- cleanup
+                obt <- fib.joinWithNever
+              yield obt
 
   def subscriptionExpect(
     bearerToken: Option[String], 
@@ -165,7 +170,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     mutations: Either[List[(String, Option[JsonObject])], IO[Any]], 
     expected: List[Json], 
     variables: Option[JsonObject]
-  ) =
+  ): IO[Unit] =
     subscription(bearerToken, query, mutations, variables).map: obt =>
       assertEquals(obt.map(_.spaces2), expected.map(_.spaces2)) 
 

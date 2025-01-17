@@ -9,7 +9,6 @@ import fs2.Stream
 import grackle.Query.Binding
 import grackle.QueryCompiler.Elab
 import grackle.QueryCompiler.SelectElaborator
-import grackle.Result
 import grackle.Schema
 import grackle.Value.StringValue
 import grackle.circe.CirceMapping
