@@ -10,7 +10,7 @@ val natchezVersion             = "0.3.7"
 val http4sBlazeVersion         = "0.23.17"
 val http4sJdkHttpClientVersion = "0.10.0"
 val logbackVersion             = "1.5.18"
-val circeVersion               = "0.14.12"
+val circeVersion               = "0.14.13"
 
 enablePlugins(NoPublishPlugin)
 
