@@ -22,6 +22,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import lucuma.graphql.routes.mkGraphqlError
+import natchez.Trace
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
@@ -91,7 +92,7 @@ object Connection {
    * PendingInit state. Initial state, awaiting `connection_init` message that contains the user
    * authorization header. Once it receives it, we transition to `Connected`.
    */
-  def pendingInit[F[_]: Logger](
+  def pendingInit[F[_]: Logger: Trace](
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
@@ -132,7 +133,7 @@ object Connection {
    * Connected state. Post-initialization, we stay in the `Connected` state until explicitly
    * terminated by the client.
    */
-  def connected[F[_]: Logger: MonadThrow](
+  def connected[F[_]: Logger: MonadThrow: Trace](
     service:       GraphQLService[F],
     send:          Option[FromServer] => F[Unit],
     subscriptions: Subscriptions[F]
@@ -169,15 +170,21 @@ object Connection {
         (this, subscriptions.removeAll)
 
       def subscribe(id: String, request: Operation): F[Unit] =
-        subscriptions.add(id, service.subscribe(request))
+        Trace[F].span("connection.subscribe"):
+          Trace[F].put("connection.fromclient.id" -> id) >>
+          Trace[F].put(service.props*) >>
+          subscriptions.add(id, service.subscribe(request))
 
       def execute(id: String, request: Operation): F[Unit] =
-        service.query(request).flatMap { r =>
-          mkFromServer(r, id).flatMap {
-            case Right(data) => send(data.some) *> send(Complete(id).some)
-            case Left(error) => send(error.some)
+        Trace[F].span("connection.execute"):
+          Trace[F].put("connection.fromclient.id" -> id) >>
+          Trace[F].put(service.props*) >>
+          service.query(request).flatMap { r =>
+            mkFromServer(r, id).flatMap {
+              case Right(data) => send(data.some) *> send(Complete(id).some)
+              case Left(error) => send(error.some)
+            }
           }
-        }
 
       override val close: (ConnectionState[F], F[Unit]) =
         (closed, subscriptions.removeAll *> send(None))
@@ -212,7 +219,7 @@ object Connection {
     }
 
 
-  def apply[F[_]: Logger](
+  def apply[F[_]: Logger: Trace](
     service: Option[Authorization] => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Option[FromServer]]
   )(implicit F: Concurrent[F]): F[Connection[F]] =
@@ -240,7 +247,7 @@ object Connection {
          * tracking subscriptions.
          * @param connectionProps properties extracted from the `connection_init` payload
          */
-        def init(connectionProps: Map[String, Json]): F[Unit] = {
+        def init(connectionProps: Map[String, Json]): F[Unit] = Trace[F].span("connection.init") {
 
           // Creates the function used to send replies to the client. It just offers a message to
           // the reply queue and logs it.
@@ -257,6 +264,7 @@ object Connection {
 
               // User is authorized. Go.
               case Some(svc) =>
+                Trace[F].put(svc.props*) >>
                 Subscriptions(reply, svc.mapping.mkResponse).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.

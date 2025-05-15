@@ -15,9 +15,14 @@ import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
 import natchez.Trace
+import natchez.TraceValue
 
+/**
+  * @param props trace properties to be added to root traces (init, subscribe, execute).
+  */
 class GraphQLService[F[_]: MonadThrow: Trace](
   val mapping: Mapping[F],
+  val props: (String, TraceValue)*
 )(implicit ev: Compiler[F,F]) {
 
   def isSubscription(op: Operation): Boolean =

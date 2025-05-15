@@ -15,7 +15,7 @@ val circeVersion               = "0.14.13"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion := "0.8"
+ThisBuild / tlBaseVersion := "0.9"
 ThisBuild / scalaVersion       := "3.6.3"
 ThisBuild / crossScalaVersions := Seq("3.6.3")
 

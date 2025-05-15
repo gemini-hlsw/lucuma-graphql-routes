@@ -22,6 +22,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
+import natchez.Trace.Implicits.noop
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
