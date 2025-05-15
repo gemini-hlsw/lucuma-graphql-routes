@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2023 Association of Universities for Research in Astronomy, Inc. (AURA)
+// Copyright (c) 2016-2025 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
 package lucuma.graphql.routes
@@ -15,9 +15,14 @@ import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
 import natchez.Trace
+import natchez.TraceValue
 
+/**
+  * @param props trace properties to be added to root traces (init, subscribe, execute).
+  */
 class GraphQLService[F[_]: MonadThrow: Trace](
   val mapping: Mapping[F],
+  val props: (String, TraceValue)*
 )(implicit ev: Compiler[F,F]) {
 
   def isSubscription(op: Operation): Boolean =

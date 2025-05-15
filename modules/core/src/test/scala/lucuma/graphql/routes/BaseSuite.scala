@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2023 Association of Universities for Research in Astronomy, Inc. (AURA)
+// Copyright (c) 2016-2025 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
 package lucuma.graphql.routes
@@ -22,6 +22,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
+import natchez.Trace.Implicits.noop
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient

@@ -1,4 +1,4 @@
-// Copyright (c) 2016-2023 Association of Universities for Research in Astronomy, Inc. (AURA)
+// Copyright (c) 2016-2025 Association of Universities for Research in Astronomy, Inc. (AURA)
 // For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
 
 package lucuma.graphql.routes
@@ -15,6 +15,7 @@ import fs2.Stream
 import grackle.Result
 import io.circe.*
 import io.circe.syntax.*
+import natchez.Trace
 import org.http4s.Header
 import org.http4s.Headers
 import org.http4s.HttpRoutes
@@ -42,7 +43,7 @@ object Routes {
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]: Logger: Async](
+  def forService[F[_]: Logger: Async: Trace](
     service:        Option[Authorization] => F[Option[GraphQLService[F]]],
     wsBuilder:      WebSocketBuilder2[F],
     graphQLPath:    String = "graphql",
@@ -74,28 +75,32 @@ object Routes {
 
       // GraphQL query is embedded in the URI query string when queried via GET
       case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
-        Logger[F].debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
-        handler(req).flatMap {
-          case Some(h) => h.oneOffGet(query, op, vars)
-          case None    => Forbidden("Access denied.")
-        }
+        Trace[F].span(s"GET /$graphQLPath"):
+          Logger[F].debug(s"GET one off: query=$query, op=$op, vars=$vars") *>
+          handler(req).flatMap {
+            case Some(h) => h.oneOffGet(query, op, vars)
+            case None    => Forbidden("Access denied.")
+          }
 
       // GraphQL query is embedded in a Json request body when queried via POST
       case req @ POST -> Root / `graphQLPath` =>
-        Logger[F].debug(s"POST one off: request=$req") *>
-        handler(req).flatMap {
-          case Some(h) => h.oneOffPost(req)
-          case None    => Forbidden("Access denied.")
-        }
+        Trace[F].span(s"POST /$graphQLPath"):
+          Logger[F].debug(s"POST one off: request=$req") *>
+          handler(req).flatMap {
+            case Some(h) => h.oneOffPost(req)
+            case None    => Forbidden("Access denied.")
+          }
 
       // WebSocket connection request.
       case req @ GET -> Root / `wsPath` =>
-        Logger[F].debug(s"GET web socket: $req") *>
-        new WsRouteHandler(service).webSocketConnection(wsBuilder)
+        Trace[F].span(s"GET /$wsPath"):
+          Logger[F].debug(s"GET web socket: $req") *>
+          new WsRouteHandler(service).webSocketConnection(wsBuilder)
 
       // GraphQL Playground
       case req @ GET -> Root / `playgroundPath` =>
-        playground(Path(req.uri.path.segments.dropRight(Path.unsafeFromString(playgroundPath).segments.length)).toAbsolute)
+        Trace[F].span(s"GET /$playgroundPath"):
+          playground(Path(req.uri.path.segments.dropRight(Path.unsafeFromString(playgroundPath).segments.length)).toAbsolute)
 
     }
   }
@@ -134,12 +139,12 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
 
 }
 
-class WsRouteHandler[F[_]: Logger: Temporal](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
+class WsRouteHandler[F[_]: Logger: Temporal: Trace](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
 
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = {
+  def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = Trace[F].span("graphql.routes.webSocketConnection") {
 
     val keepAliveStream: Stream[F, FromServer] =
       Stream
