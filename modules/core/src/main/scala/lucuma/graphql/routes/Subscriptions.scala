@@ -67,8 +67,7 @@ object Subscriptions {
     
 
   def apply[F[_]: Logger: Concurrent](
-    send: Option[FromServer] => F[Unit],
-    mkResponse: Result[Json] => F[Json]
+    send: Option[FromServer] => F[Unit]
   ): F[Subscriptions[F]] =
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>

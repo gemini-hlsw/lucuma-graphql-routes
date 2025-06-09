@@ -39,7 +39,7 @@ object VariablesMapping extends CirceMapping[IO]:
       CursorFieldJson("echo", c => c.envR[String]("s").map(Json.fromString), Nil)
     )),
     ObjectMapping(SubscriptionType, List(
-      RootStream.computeJson("echo"): (p, e) =>
+      RootStream.computeJson("echo"): (_, e) =>
         val r = e.getR[String]("s").map(Json.fromString)
         Stream(r, r, r).covary[IO]
     ))

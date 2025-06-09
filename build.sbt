@@ -1,23 +1,22 @@
-val clueVersion                = "0.43.1"
-val fs2Version                 = "3.2.7"
+val circeVersion               = "0.14.13"
+val clueVersion                = "0.45.0"
+val fs2Version                 = "3.12.0"
 val grackleVersion             = "0.24.0"
 val http4sVersion              = "0.23.30"
-val kindProjectorVersion       = "0.13.2"
-val log4catsVersion            = "2.7.0"
-val munitCatsEffectVersion     = "2.0.0"
-val munitVersion               = "1.1.1"
-val natchezVersion             = "0.3.7"
 val http4sBlazeVersion         = "0.23.17"
 val http4sJdkHttpClientVersion = "0.10.0"
+val log4catsVersion            = "2.7.0"
 val logbackVersion             = "1.5.18"
-val circeVersion               = "0.14.13"
+val munitVersion               = "1.1.1"
+val munitCatsEffectVersion     = "2.1.0"
+val natchezVersion             = "0.3.8"
 
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion := "0.9"
-ThisBuild / scalaVersion       := "3.6.3"
-ThisBuild / crossScalaVersions := Seq("3.6.3")
+ThisBuild / tlBaseVersion := "0.10"
+ThisBuild / scalaVersion       := "3.7.1"
+ThisBuild / crossScalaVersions := Seq("3.7.1")
 
 // Tests work fine in parallel but the output get interleaved, which can be confusing.
 // It's fast so there's no harm doing them sequentially here.
