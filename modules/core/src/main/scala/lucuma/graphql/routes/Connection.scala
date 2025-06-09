@@ -265,7 +265,7 @@ object Connection {
               // User is authorized. Go.
               case Some(svc) =>
                 Trace[F].put(svc.props*) >>
-                Subscriptions(reply, svc.mapping.mkResponse).flatMap(s => handle(_.reset(svc, reply, s)))
+                Subscriptions(reply).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>

@@ -36,7 +36,7 @@ object AuthMapping extends CirceMapping[IO]:
       CursorFieldJson("foo", _ => Result.success(Json.fromInt(42)), Nil)
     )),
     ObjectMapping(SubscriptionType, List(
-      RootStream.computeJson("bar"): (path, env) =>
+      RootStream.computeJson("bar"): (_, _) =>
         Stream(1, 2, 3).covary[IO].map(n => Result.success(Json.fromInt(n)))
     ))
   )

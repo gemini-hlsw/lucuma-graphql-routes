@@ -54,7 +54,7 @@ object BaseSuite:
 
   // a runtime that is constructed the same as global, but lets us see unhandled errors (above)
   val runtime: IORuntime =
-    val (compute, _) = IORuntime.createWorkStealingComputeThreadPool(reportFailure = reportFailure)
+    val (compute, _, _) = IORuntime.createWorkStealingComputeThreadPool(reportFailure = reportFailure)
     val (blocking, _) = IORuntime.createDefaultBlockingExecutionContext()
     val (scheduler, _) = IORuntime.createDefaultScheduler()
     IORuntime(compute, blocking, scheduler, () => (), IORuntimeConfig())
@@ -83,7 +83,7 @@ abstract class BaseSuite extends CatsEffectSuite:
       xbe <- JdkHttpClient.simple[IO].map(Http4sHttpBackend[IO](_))
       uri  = svr.baseUri / "graphql"
       hs   = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
-      xc  <- Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(Async[IO], xbe, Logger[IO]))
+      xc  <- Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
     yield xc
 
   private def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
