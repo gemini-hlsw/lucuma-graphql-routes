@@ -15,7 +15,7 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromClient.*
 import clue.model.StreamingMessage.FromServer.*
-import clue.model.json.*
+import clue.model.json.given
 import grackle.Operation
 import grackle.Result.*
 import io.circe.Json
@@ -153,7 +153,7 @@ object Connection {
         )
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
-        val parseResult = service.parse(raw.query, raw.operationName, raw.variables)
+        val parseResult = service.parse(raw.query.value, raw.operationName, raw.variables)
         val action = parseResult match {
           case Success(op)        => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op)
           case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op) // n.b. warnings on subscribe are lost
