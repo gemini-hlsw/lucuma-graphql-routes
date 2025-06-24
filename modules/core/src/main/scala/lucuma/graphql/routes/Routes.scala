@@ -10,7 +10,7 @@ import cats.effect.std.Queue
 import cats.implicits.*
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
-import clue.model.json.*
+import clue.model.json.given
 import fs2.Stream
 import grackle.Result
 import io.circe.*
