@@ -15,8 +15,8 @@ enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 ThisBuild / tlBaseVersion := "0.10"
-ThisBuild / scalaVersion       := "3.7.1"
-ThisBuild / crossScalaVersions := Seq("3.7.1")
+ThisBuild / scalaVersion       := "3.7.2"
+ThisBuild / crossScalaVersions := Seq("3.7.2")
 
 // Tests work fine in parallel but the output get interleaved, which can be confusing.
 // It's fast so there's no harm doing them sequentially here.
