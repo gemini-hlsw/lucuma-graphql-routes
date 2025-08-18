@@ -63,7 +63,8 @@ object Playground {
         |      GraphQLPlayground.init(document.getElementById('root'), {
         |        // options as 'endpoint' belong here
         |        'endpoint': '$graphQLPath',
-        |        'subscriptionEndpoint': '$wsPath'
+        |        'subscriptionEndpoint': '$wsPath',
+                 'schema.polling.enable': false
         |      })
         |    })</script>
         |</body>
