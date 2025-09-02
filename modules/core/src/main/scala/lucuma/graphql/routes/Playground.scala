@@ -59,7 +59,7 @@ object Playground {
         |
         |          "@graphiql/toolkit": "https://esm.sh/@graphiql/toolkit?standalone&external=graphql",
         |          "graphql": "https://esm.sh/graphql@16.11.0",
-        |          "subscriptions-transport-ws": "https://esm.sh/subscriptions-transport-ws@0.11.0",
+        |          "graphql-ws": "https://esm.sh/graphql-ws@5.6.0",
         |
         |          "@emotion/is-prop-valid": "data:text/javascript,"
         |        }
@@ -71,12 +71,12 @@ object Playground {
         |      import { GraphiQL, HISTORY_PLUGIN } from 'graphiql';
         |      import { createGraphiQLFetcher } from '@graphiql/toolkit';
         |      import { explorerPlugin } from '@graphiql/plugin-explorer';
-        |      import { SubscriptionClient } from 'subscriptions-transport-ws';
+        |      import { createClient } from 'graphql-ws';
         |      import 'graphiql/setup-workers/esm.sh';
         |
         |      const fetcher = createGraphiQLFetcher({
         |        url: '$graphQLPath',
-        |        legacyWsClient: new SubscriptionClient('$wsPath'),
+        |        wsClient: createClient({ url: '$wsPath' })
         |      });
         |      const plugins = [HISTORY_PLUGIN, explorerPlugin()];
         |

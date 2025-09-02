@@ -1,5 +1,5 @@
 val circeVersion               = "0.14.14"
-val clueVersion                = "0.46.0"
+val clueVersion                = "0.47.0"
 val fs2Version                 = "3.12.0"
 val grackleVersion             = "0.25.0"
 val http4sVersion              = "0.23.30"
@@ -14,7 +14,7 @@ val natchezVersion             = "0.3.8"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion := "0.10"
+ThisBuild / tlBaseVersion := "0.11"
 ThisBuild / scalaVersion       := "3.7.2"
 ThisBuild / crossScalaVersions := Seq("3.7.2")
 
