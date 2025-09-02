@@ -148,13 +148,14 @@ class WsRouteHandler[F[_]: Logger: Temporal: Trace](service: Option[Authorizatio
 
     val keepAliveStream: Stream[F, FromServer] =
       Stream
-        .constant[F, FromServer](FromServer.ConnectionKeepAlive)
+        .constant[F, FromServer](FromServer.Ping())
         .metered(KeepAliveDuration)
 
-    def logFromServer(msg: FromServer): F[Unit] =
+    def logFromServer(msg: Either[GraphQLWSError, FromServer]): F[Unit] =
       msg match {
-        case FromServer.ConnectionKeepAlive => Logger[F].debug(s"Sending ConnectionKeepAlive")
-        case _                              => Logger[F].debug(s"Sending to client: ${trimmedMessage(msg)}")
+        case Left(err)                 => Logger[F].warn(s"Sending error to client: ${err.code} ${err.reason} - Closing connection")
+        case Right(FromServer.Ping(_)) => Logger[F].debug(s"Sending Ping")
+        case Right(msg)                  => Logger[F].debug(s"Sending to client: ${trimmedMessage(msg)}")
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -176,16 +177,19 @@ class WsRouteHandler[F[_]: Logger: Temporal: Trace](service: Option[Authorizatio
     }
 
     for {
-      replyQueue <- Queue.unbounded[F, Option[FromServer]]
+      replyQueue <- Queue.unbounded[F, Option[Either[GraphQLWSError, FromServer]]]
       connection <- Connection(service, replyQueue)
-      response   <- wsb.withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-ws"))).build(
+      response   <- wsb.withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws"))).build(
 
           // Replies to client
           Stream
             .fromQueueNoneTerminated(replyQueue)
-            .mergeHaltL(keepAliveStream)
+            .mergeHaltL(keepAliveStream.map(_.asRight))
             .evalTap(logFromServer)
-            .map(m => Text(m.asJson.spaces2)),
+            .map{
+              case Left(err) => Close(err.code, err.reason).orElse(Close(err.code)).toOption.get
+              case Right(m) => Text(m.asJson.spaces2)
+            },
 
           // Input from client
           _.evalTap(logWebSocketFrame)

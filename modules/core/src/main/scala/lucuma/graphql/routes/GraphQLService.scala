@@ -28,11 +28,8 @@ class GraphQLService[F[_]: MonadThrow: Trace](
   def isSubscription(op: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= op.rootTpe)
 
-  // TODO: a temporary workaround for a bug in 0.18.1 which is fixed in
-  // https://github.com/typelevel/grackle/pull/566.
-  // Once there is a 0.18.2 or better, we can remove `reportUnused = false`.
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
-    mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
+    mapping.compiler.compile(query, op, vars.map(_.toJson))
 
   def query(op: Operation): F[Result[Json]] =
     Trace[F].span("graphql") {

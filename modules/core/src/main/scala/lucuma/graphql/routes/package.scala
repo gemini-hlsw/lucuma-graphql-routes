@@ -23,7 +23,7 @@ package object routes {
       p.message,
       NonEmptyList.fromList(p.path.map(GraphQLError.PathElement.string)),
       NonEmptyList.fromList(p.locations.map { case (x, y) => GraphQLError.Location(x, y) }),
-      p.extensions.map { obj => obj.toMap },
+      p.extensions,
     )
 
   def mkGraphqlErrors(problems: NonEmptyChain[Problem]): GraphQLErrors =
@@ -32,10 +32,10 @@ package object routes {
   def mkGraphqlErrors(error: Throwable): GraphQLErrors =
     NonEmptyList.one(mkGraphqlError(Problem(s"Internal Error: ${error.getMessage}")))
 
-  def mkFromServer[F[_]: MonadThrow](r: Result[Json], id: String): F[Either[FromServer.Error, FromServer.Data]] =
+  def mkFromServer[F[_]: MonadThrow](r: Result[Json], id: String): F[Either[FromServer.Error, FromServer.Next]] =
     r match {
-      case Success(json)      => FromServer.Data(id, GraphQLResponse(json.rightIor)).asRight.pure[F]
-      case Warning(ps, json)  => FromServer.Data(id, GraphQLResponse(Ior.both(mkGraphqlErrors(ps), json))).asRight.pure[F]
+      case Success(json)      => FromServer.Next(id, GraphQLResponse(json.rightIor)).asRight.pure[F]
+      case Warning(ps, json)  => FromServer.Next(id, GraphQLResponse(Ior.both(mkGraphqlErrors(ps), json))).asRight.pure[F]
       case Failure(ps)        => FromServer.Error(id, mkGraphqlErrors(ps)).asLeft.pure[F]
       case InternalError(err) => FromServer.Error(id, mkGraphqlErrors(err)).asLeft.pure[F]
     }

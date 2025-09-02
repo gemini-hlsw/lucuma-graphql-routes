@@ -40,7 +40,7 @@ import scala.concurrent.duration.*
 object BaseSuite:
 
   enum ClientOption:
-    case Http,Ws
+    case Http, Ws
   
   object ClientOption:
     val all = values.toList
