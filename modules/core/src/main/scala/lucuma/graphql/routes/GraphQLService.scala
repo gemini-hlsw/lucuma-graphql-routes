@@ -28,8 +28,10 @@ class GraphQLService[F[_]: MonadThrow: Trace](
   def isSubscription(op: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= op.rootTpe)
 
+  // TODO: grackle is still falsely reporting unused vars as of 0.25.0.
+  // Once this is fixed, we can remove `reportUnused = false`.
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
-    mapping.compiler.compile(query, op, vars.map(_.toJson))
+    mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
   def query(op: Operation): F[Result[Json]] =
     Trace[F].span("graphql") {
