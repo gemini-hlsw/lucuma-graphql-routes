@@ -46,11 +46,11 @@ object Playground {
         |    <script type="importmap">
         |      {
         |        "imports": {
-        |          "react": "https://esm.sh/react@19.1.1",
-        |          "react/": "https://esm.sh/react@19.1.1/",
+        |          "react": "https://esm.sh/react@^19",
+        |          "react/": "https://esm.sh/react@^19/",
         |
-        |          "react-dom": "https://esm.sh/react-dom@19.1.1",
-        |          "react-dom/": "https://esm.sh/react-dom@19.1.1/",
+        |          "react-dom": "https://esm.sh/react-dom@^19",
+        |          "react-dom/": "https://esm.sh/react-dom@^19",
         |
         |          "graphiql": "https://esm.sh/graphiql?standalone&external=react,react-dom,@graphiql/react,graphql",
         |          "graphiql/": "https://esm.sh/graphiql/",
@@ -58,8 +58,8 @@ object Playground {
         |          "@graphiql/react": "https://esm.sh/@graphiql/react?standalone&external=react,react-dom,graphql,@graphiql/toolkit,@emotion/is-prop-valid",
         |
         |          "@graphiql/toolkit": "https://esm.sh/@graphiql/toolkit?standalone&external=graphql",
-        |          "graphql": "https://esm.sh/graphql@16.11.0",
-        |          "graphql-ws": "https://esm.sh/graphql-ws@5.6.0",
+        |          "graphql": "https://esm.sh/graphql@^16",
+        |          "graphql-ws": "https://esm.sh/graphql-ws@^6",
         |
         |          "@emotion/is-prop-valid": "data:text/javascript,"
         |        }
