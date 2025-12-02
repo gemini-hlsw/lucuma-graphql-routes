@@ -50,7 +50,7 @@ object Playground {
         |          "react/": "https://esm.sh/react@^19/",
         |
         |          "react-dom": "https://esm.sh/react-dom@^19",
-        |          "react-dom/": "https://esm.sh/react-dom@^19",
+        |          "react-dom/": "https://esm.sh/react-dom@^19/",
         |
         |          "graphiql": "https://esm.sh/graphiql?standalone&external=react,react-dom,@graphiql/react,graphql",
         |          "graphiql/": "https://esm.sh/graphiql/",
