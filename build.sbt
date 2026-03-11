@@ -8,7 +8,7 @@ val http4sJdkHttpClientVersion = "0.10.0"
 val log4catsVersion            = "2.7.1"
 val logbackVersion             = "1.5.32"
 val munitVersion               = "1.2.4"
-val munitCatsEffectVersion     = "2.1.0"
+val munitCatsEffectVersion     = "2.2.0"
 val natchezVersion             = "0.3.9"
 
 enablePlugins(NoPublishPlugin)
