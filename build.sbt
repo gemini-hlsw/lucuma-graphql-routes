@@ -9,7 +9,7 @@ val log4catsVersion            = "2.7.1"
 val logbackVersion             = "1.5.26"
 val munitVersion               = "1.2.1"
 val munitCatsEffectVersion     = "2.1.0"
-val natchezVersion             = "0.3.8"
+val natchezVersion             = "0.3.9"
 
 enablePlugins(NoPublishPlugin)
 
