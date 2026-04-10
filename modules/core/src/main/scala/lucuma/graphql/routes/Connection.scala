@@ -151,15 +151,13 @@ object Connection {
         (this, subscriptions.remove(id))
 
       def subscribe(id: String, request: Operation): F[Unit] =
-        T.span("connection.subscribe").use: span =>
-          span.addAttribute(Attribute("connection.fromclient.id", id)) >>
-            span.addAttributes(service.props*) >>
+        T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
+          _.addAttributes(service.props*) >>
             subscriptions.add(id, service.subscribe(request))
 
       def execute(id: String, request: Operation): F[Unit] =
-        T.span("connection.execute").use: span =>
-          span.addAttribute(Attribute("connection.fromclient.id", id)) >>
-            span.addAttributes(service.props*) >>
+        T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
+          _.addAttributes(service.props*) >>
             service.query(request).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
@@ -172,7 +170,7 @@ object Connection {
     }
 
   /** Closed state.  All requests raise an error, the connection having been closed. */
-  def closed[F[_]: {MonadThrow as M}]: ConnectionState[F] =
+  def closed[F[_]: MonadThrow as M]: ConnectionState[F] =
 
     new ConnectionState[F] {
 
@@ -241,8 +239,9 @@ object Connection {
 
               // User is authorized. Go.
               case Some(svc) =>
-                T.currentSpanOrNoop.flatMap(_.addAttributes(svc.props*)) >>
-                Subscriptions(msg => reply(msg.map(_.asRight))).flatMap(s => handle(_.reset(svc, reply, s)))
+                T.withCurrentSpanOrNoop:
+                  _.addAttributes(svc.props*) >>
+                    Subscriptions(msg => reply(msg.map(_.asRight))).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>

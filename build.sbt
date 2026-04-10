@@ -9,7 +9,7 @@ val log4catsVersion            = "2.8.0"
 val logbackVersion             = "1.5.32"
 val munitVersion               = "1.2.4"
 val munitCatsEffectVersion     = "2.2.0"
-val otel4sVersion              = "0.15.2"
+val otel4sVersion              = "0.16.0"
 
 enablePlugins(NoPublishPlugin)
 
@@ -42,6 +42,6 @@ lazy val core = project
       "org.scalameta"  %% "munit"                  % munitVersion               % Test,
       "org.typelevel"  %% "grackle-circe"          % grackleVersion             % Test,
       "org.typelevel"  %% "log4cats-slf4j"         % log4catsVersion            % Test,
-      "org.typelevel"  %% "munit-cats-effect"    % munitCatsEffectVersion     % Test,
+      "org.typelevel"  %% "munit-cats-effect"      % munitCatsEffectVersion     % Test,
     ),
   )

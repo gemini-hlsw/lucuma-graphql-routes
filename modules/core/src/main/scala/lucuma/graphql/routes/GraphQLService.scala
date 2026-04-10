@@ -32,13 +32,12 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
     mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
   def query(op: Operation): F[Result[Json]] =
-    T.span("graphql").use: span =>
-      // I wonder if we should truncate the query
-      span.addAttribute(Attribute("graphql.query", op.query.render)) *>
-        subscribe(op).compile.toList.map {
-          case List(e) => e
-          case other   => Result.internalError(GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")))
-        }
+    // I wonder if we should truncate the query
+    T.span("graphql", Attribute("graphql.query", op.query.render)).surround:
+      subscribe(op).compile.toList.map {
+        case List(e) => e
+        case other   => Result.internalError(GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")))
+      }
 
   def subscribe(op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
