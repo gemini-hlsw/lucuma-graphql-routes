@@ -14,33 +14,31 @@ import grackle.Problem
 import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
-import natchez.Trace
-import natchez.TraceValue
+import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.trace.Tracer
 
 /**
   * @param props trace properties to be added to root traces (init, subscribe, execute).
   */
-class GraphQLService[F[_]: MonadThrow: Trace](
+class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   val mapping: Mapping[F],
-  val props: (String, TraceValue)*
-)(implicit ev: Compiler[F,F]) {
+  val props: Attribute[?]*
+)(using Compiler[F,F]) {
 
   def isSubscription(op: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= op.rootTpe)
 
-  // TODO: grackle is still falsely reporting unused vars as of 0.25.0.
-  // Once this is fixed, we can remove `reportUnused = false`.
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
     mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
   def query(op: Operation): F[Result[Json]] =
-    Trace[F].span("graphql") {
-      Trace[F].put("graphql.query" -> op.query.render) *>
-      subscribe(op).compile.toList.map {
-        case List(e) => e
-        case other   => Result.internalError(GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")))
-      }
-    }
+    T.span("graphql").use: span =>
+      // I wonder if we should truncate the query
+      span.addAttribute(Attribute("graphql.query", op.query.render)) *>
+        subscribe(op).compile.toList.map {
+          case List(e) => e
+          case other   => Result.internalError(GrackleException(Problem(s"Expected exactly one result, found ${other.length}.")))
+        }
 
   def subscribe(op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
@@ -52,4 +50,3 @@ object GrackleException {
   def apply(problems: NonEmptyChain[Problem]): GrackleException = apply(problems.toList)
   def apply(problem: Problem): GrackleException = apply(List(problem))
 }
-

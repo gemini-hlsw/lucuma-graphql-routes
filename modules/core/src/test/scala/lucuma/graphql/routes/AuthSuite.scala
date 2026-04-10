@@ -12,7 +12,6 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
-import natchez.Trace.Implicits.noop
 import org.http4s.AuthScheme
 import org.http4s.Credentials
 import org.http4s.client.UnexpectedStatus
@@ -52,7 +51,7 @@ class AuthSuite extends BaseSuite:
     expect(
       bearerToken = bearerToken,
       query       = "query { foo }",
-      expected    = Right(json"""{ "foo": 42 }"""), 
+      expected    = Right(json"""{ "foo": 42 }"""),
       variables   = None,
       client      = option
     )
@@ -83,7 +82,7 @@ class AuthSuite extends BaseSuite:
 
   test("[ws, one-off] Correct credentials should work."):
     testQuery(Some("bob"), Ws)
-  
+
   test("[ws, subscription] Missing credentials should raise RemoteInitializationException."):
     interceptIO[RemoteInitializationException](testSubscription(None))
 

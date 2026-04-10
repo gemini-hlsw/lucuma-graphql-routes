@@ -9,12 +9,12 @@ val log4catsVersion            = "2.8.0"
 val logbackVersion             = "1.5.32"
 val munitVersion               = "1.2.4"
 val munitCatsEffectVersion     = "2.2.0"
-val natchezVersion             = "0.3.9"
+val otel4sVersion              = "0.15.2"
 
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion := "0.11"
+ThisBuild / tlBaseVersion := "0.12"
 ThisBuild / scalaVersion       := "3.8.3"
 ThisBuild / crossScalaVersions := Seq("3.8.3")
 
@@ -31,7 +31,7 @@ lazy val core = project
       "org.http4s"     %% "http4s-circe"           % http4sVersion,
       "org.http4s"     %% "http4s-dsl"             % http4sVersion,
       "org.http4s"     %% "http4s-server"          % http4sVersion,
-      "org.tpolecat"   %% "natchez-core"           % natchezVersion,
+      "org.typelevel"  %% "otel4s-core-trace"      % otel4sVersion,
       "org.typelevel"  %% "grackle-core"           % grackleVersion,
       "org.typelevel"  %% "log4cats-core"          % log4catsVersion,
       "ch.qos.logback" %  "logback-classic"        % logbackVersion             % Test,
