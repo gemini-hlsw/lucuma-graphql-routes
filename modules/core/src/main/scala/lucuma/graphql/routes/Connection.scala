@@ -17,10 +17,12 @@ import grackle.Operation
 import grackle.Result.*
 import io.circe.JsonObject
 import lucuma.graphql.routes.mkGraphqlError
-import natchez.Trace
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
+import org.typelevel.log4cats.syntax.*
+import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.trace.Tracer
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
@@ -81,7 +83,7 @@ object Connection {
    * PendingInit state. Initial state, awaiting `connection_init` message that contains the user
    * authorization header. Once it receives it, we transition to `Connected`.
    */
-  def pendingInit[F[_]: Logger: Trace](
+  def pendingInit[F[_]: Logger: Tracer](
     replyQueue: Queue[F, Option[Either[GraphQLWSError, FromServer]]]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
@@ -115,7 +117,7 @@ object Connection {
    * Connected state. Post-initialization, we stay in the `Connected` state until explicitly
    * terminated by the client.
    */
-  def connected[F[_]: Logger: MonadThrow: Trace](
+  def connected[F[_]: {Logger, MonadThrow, Tracer as T}](
     service:       GraphQLService[F],
     send:          Option[Either[GraphQLWSError, FromServer]] => F[Unit],
     subscriptions: Subscriptions[F]
@@ -149,28 +151,26 @@ object Connection {
         (this, subscriptions.remove(id))
 
       def subscribe(id: String, request: Operation): F[Unit] =
-        Trace[F].span("connection.subscribe"):
-          Trace[F].put("connection.fromclient.id" -> id) >>
-          Trace[F].put(service.props*) >>
-          subscriptions.add(id, service.subscribe(request))
+        T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
+          _.addAttributes(service.props*) >>
+            subscriptions.add(id, service.subscribe(request))
 
       def execute(id: String, request: Operation): F[Unit] =
-        Trace[F].span("connection.execute"):
-          Trace[F].put("connection.fromclient.id" -> id) >>
-          Trace[F].put(service.props*) >>
-          service.query(request).flatMap { r =>
-            mkFromServer(r, id).flatMap {
-              case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
-              case Left(error) => send(error.asRight.some)
+        T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
+          _.addAttributes(service.props*) >>
+            service.query(request).flatMap { r =>
+              mkFromServer(r, id).flatMap {
+                case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
+                case Left(error) => send(error.asRight.some)
+              }
             }
-          }
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (closed, subscriptions.removeAll *> send(reason.map(_.asLeft)))
     }
 
   /** Closed state.  All requests raise an error, the connection having been closed. */
-  def closed[F[_]](implicit M: MonadError[F, Throwable]): ConnectionState[F] =
+  def closed[F[_]: MonadThrow as M]: ConnectionState[F] =
 
     new ConnectionState[F] {
 
@@ -195,7 +195,7 @@ object Connection {
     }
 
 
-  def apply[F[_]: Logger: Trace](
+  def apply[F[_]: {Logger, Tracer as T}](
     service: Option[Authorization] => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Option[Either[GraphQLWSError, FromServer]]]
   )(implicit F: Concurrent[F]): F[Connection[F]] =
@@ -222,14 +222,14 @@ object Connection {
          * tracking subscriptions.
          * @param connectionProps properties extracted from the `connection_init` payload
          */
-        def init(connectionProps: Option[JsonObject]): F[Unit] = Trace[F].span("connection.init") {
+        def init(connectionProps: Option[JsonObject]): F[Unit] = T.span("connection.init").surround {
 
           // Creates the function used to send replies to the client. It just offers a message to
           // the reply queue and logs it.
           val reply: Option[Either[GraphQLWSError, FromServer]] => F[Unit] = { m =>
             for {
               b <- replyQueue.tryOffer(m)
-              _ <- Logger[F].debug(s"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}")
+              _ <- debug"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}"
             } yield ()
           }
 
@@ -239,8 +239,9 @@ object Connection {
 
               // User is authorized. Go.
               case Some(svc) =>
-                Trace[F].put(svc.props*) >>
-                Subscriptions(msg => reply(msg.map(_.asRight))).flatMap(s => handle(_.reset(svc, reply, s)))
+                T.withCurrentSpanOrNoop:
+                  _.addAttributes(svc.props*) >>
+                    Subscriptions(msg => reply(msg.map(_.asRight))).flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>
@@ -268,12 +269,12 @@ object Connection {
         }
 
         override def receive(m: FromClient): F[Unit] =
-          Logger[F].debug(s"received $m") *> {
+          debug"received $m" *> {
             m match {
               case ConnectionInit(m)       => init(m)
               case Subscribe(id, request)  => handle(_.start(id, request))
               case FromClient.Complete(id) => handle(_.stop(id))
-              case Pong(_)                 => Logger[F].debug(s"Received Pong from client")
+              case Pong(_)                 => debug"Received Pong from client"
             }
           }
 

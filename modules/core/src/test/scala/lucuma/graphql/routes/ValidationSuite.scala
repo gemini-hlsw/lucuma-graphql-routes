@@ -10,7 +10,6 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
-import natchez.Trace.Implicits.noop
 import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
@@ -34,7 +33,7 @@ class ValidationSuite extends BaseSuite:
     expect(
       bearerToken = None,
       query       = "query { x }",
-      expected    = Left(List("No field 'x' for type Query")), 
+      expected    = Left(List("No field 'x' for type Query")),
       variables   = None,
       client      = option
     )
@@ -56,4 +55,3 @@ class ValidationSuite extends BaseSuite:
 
   test("[ws, subscription] invalid query should raise ResponseException"):
     interceptIO[ResponseException[Json]](testSubscription)
-

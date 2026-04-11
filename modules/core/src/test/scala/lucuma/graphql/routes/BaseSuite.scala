@@ -22,7 +22,6 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
-import natchez.Trace.Implicits.noop
 import org.http4s.blaze.server.BlazeServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
@@ -32,6 +31,7 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{ Uri as Http4sUri, * }
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
+import org.typelevel.otel4s.trace.Tracer
 
 import java.net.SocketException
 import scala.concurrent.duration.*
@@ -41,7 +41,7 @@ object BaseSuite:
 
   enum ClientOption:
     case Http, Ws
-  
+
   object ClientOption:
     val all = values.toList
 
@@ -66,7 +66,9 @@ abstract class BaseSuite extends CatsEffectSuite:
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]]
 
   override lazy val munitIoRuntime: IORuntime = BaseSuite.runtime
+
   given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")
+  given Tracer[IO] = Tracer.noop[IO]
 
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
     Resource.pure(Routes.forService(service, _).orNotFound)
@@ -98,7 +100,7 @@ abstract class BaseSuite extends CatsEffectSuite:
   private lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)
 
-  override def munitFixtures = 
+  override def munitFixtures =
     List(serverFixture)
 
   private case class Operation(document: String) extends GraphQLOperation.Typed[Nothing, JsonObject, Json]
@@ -131,14 +133,14 @@ abstract class BaseSuite extends CatsEffectSuite:
       .flatMap(connection(client, bearerToken))
       .use: conn =>
         val req = conn.request(Operation(query))
-        val op  = 
+        val op  =
             variables.fold(req.apply)(req.withInput).raiseGraphQLErrors
         op
 
   def subscription(
-    bearerToken: Option[String], 
-    query: String, 
-    mutations: Either[List[(String, Option[JsonObject])], IO[Any]], 
+    bearerToken: Option[String],
+    query: String,
+    mutations: Either[List[(String, Option[JsonObject])], IO[Any]],
     variables: Option[JsonObject],
     onError: ResponseException[Json] => IO[Unit] = _ => IO.unit
   ): IO[List[Json]] =
@@ -166,14 +168,14 @@ abstract class BaseSuite extends CatsEffectSuite:
               yield obt
 
   def subscriptionExpect(
-    bearerToken: Option[String], 
-    query: String, 
-    mutations: Either[List[(String, Option[JsonObject])], IO[Any]], 
-    expected: List[Json], 
+    bearerToken: Option[String],
+    query: String,
+    mutations: Either[List[(String, Option[JsonObject])], IO[Any]],
+    expected: List[Json],
     variables: Option[JsonObject]
   ): IO[Unit] =
     subscription(bearerToken, query, mutations, variables).map: obt =>
-      assertEquals(obt.map(_.spaces2), expected.map(_.spaces2)) 
+      assertEquals(obt.map(_.spaces2), expected.map(_.spaces2))
 
   def interceptGraphQL(messages: String*)(fa: IO[Any]): IO[Unit] =
     fa.attempt.flatMap:

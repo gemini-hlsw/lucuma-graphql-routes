@@ -15,7 +15,6 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
-import natchez.Trace.Implicits.noop
 import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
@@ -55,7 +54,7 @@ class VariablesSuite extends BaseSuite:
     expect(
       bearerToken = none,
       query       = """query($abc: String) { echo(s: $abc) }""",
-      expected    = Right(json"""{ "echo": "foo" }"""), 
+      expected    = Right(json"""{ "echo": "foo" }"""),
       variables   = Json.obj("abc" -> Json.fromString("foo")).asObject,
       client      = option
     )
