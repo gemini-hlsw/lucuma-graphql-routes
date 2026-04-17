@@ -123,7 +123,8 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   ): F[Response[F]] =
     vars0.sequence.fold(
       errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
-      vars   => service.parse(query, op, vars).flatTraverse(service.query).flatMap(toResponse)
+      // No extension for on offs
+      vars   => service.parse(query, op, vars).flatTraverse(service.query(_)).flatMap(toResponse)
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
@@ -131,10 +132,11 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       body   <- req.as[Json]
       obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
-      op     =  obj("operationName").flatMap(_.asString)
-      vars   =  obj("variables").flatMap(_.asObject)
-      parsed =  service.parse(query, op, vars)
-      result <- parsed.traverse(service.query).map(_.flatten)
+      op      = obj("operationName").flatMap(_.asString)
+      vars    = obj("variables").flatMap(_.asObject)
+      ext     = obj("extensions").flatMap(_.asObject)
+      parsed  = service.parse(query, op, vars)
+      result <- parsed.traverse(service.query(_, ext)).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
 

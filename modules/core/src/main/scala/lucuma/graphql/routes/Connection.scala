@@ -9,6 +9,7 @@ import cats.effect.Concurrent
 import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.syntax.all.*
+import clue.model.GraphQLExtensions
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromClient.*
@@ -138,9 +139,10 @@ object Connection {
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
         val parseResult = service.parse(raw.query.value, raw.operationName, raw.variables)
+        val ext         = raw.extensions
         val action = parseResult match {
-          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op)
-          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op) // n.b. warnings on subscribe are lost
+          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, ext) else execute(id, op, ext)
+          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, ext) else execute(id, op, ext) // n.b. warnings on subscribe are lost
           case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).asRight.some)
           case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).asRight.some)
         }
@@ -150,15 +152,15 @@ object Connection {
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
         (this, subscriptions.remove(id))
 
-      def subscribe(id: String, request: Operation): F[Unit] =
+      def subscribe(id: String, request: Operation, extensions: Option[GraphQLExtensions]): F[Unit] =
         T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
           _.addAttributes(service.props*) >>
-            subscriptions.add(id, service.subscribe(request))
+            subscriptions.add(id, service.subscribe(request, extensions))
 
-      def execute(id: String, request: Operation): F[Unit] =
+      def execute(id: String, request: Operation, extensions: Option[GraphQLExtensions]): F[Unit] =
         T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
           _.addAttributes(service.props*) >>
-            service.query(request).flatMap { r =>
+            service.query(request, extensions).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
                 case Left(error) => send(error.asRight.some)
