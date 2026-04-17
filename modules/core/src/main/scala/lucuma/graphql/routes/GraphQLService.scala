@@ -16,6 +16,8 @@ import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
 import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.Attributes
+import org.typelevel.otel4s.semconv.experimental.attributes.GraphqlExperimentalAttributes.*
 import org.typelevel.otel4s.trace.SpanKind
 import org.typelevel.otel4s.trace.Tracer
 
@@ -30,38 +32,66 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def isSubscription(op: Operation): Boolean =
     mapping.schema.subscriptionType.exists(_ =:= op.rootTpe)
 
+  def isMutation(op: Operation): Boolean =
+    mapping.schema.mutationType.exists(_ =:= op.rootTpe)
+
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
     mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
-  def query(op: Operation, extensions: Option[GraphQLExtensions] = None): F[Result[Json]] = {
+  // OTEL attributes for a GraphQL operation; see
+  // https://opentelemetry.io/docs/specs/semconv/graphql/graphql-spans/
+  private def graphqlAttributes(
+    op:            Operation,
+    document:      String,
+    operationName: Option[String]
+  ): Attributes = {
+    val opType =
+      if isSubscription(op)  then GraphqlOperationTypeValue.Subscription.value
+      else if isMutation(op) then GraphqlOperationTypeValue.Mutation.value
+      else                   GraphqlOperationTypeValue.Query.value
+
+    Attributes(
+      (List(
+        Attribute(GraphqlDocument, document),
+        Attribute(GraphqlOperationType, opType),
+      ) ++ operationName.map(Attribute(GraphqlOperationName, _)) ++ props)*
+    )
+  }
+
+  def query(
+    op:            Operation,
+    document:      String,
+    extensions:    Option[GraphQLExtensions] = None,
+    operationName: Option[String]            = None
+  ): F[Result[Json]] = {
     val _ = extensions
-    // I wonder if we should truncate the query
     T.spanBuilder("graphql")
-      .withSpanKind(SpanKind.Server)
-      .addAttribute(Attribute("graphql.query", op.query.render))
+      .withSpanKind(SpanKind.Server) // it is assumed we run this on the serevr
+      .addAttributes(graphqlAttributes(op, document, operationName))
       .build
       .surround:
-      runInterpreter(op).compile.toList.map {
-        case List(e) => e
-        case other   =>
-          Result.internalError(
-            GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
-          )
-      }
+        runInterpreter(op).compile.toList.map {
+          case List(e) => e
+          case other   =>
+            Result.internalError(
+              GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
+            )
+        }
   }
 
   def subscribe(
-    op:         Operation,
-    extensions: Option[GraphQLExtensions] = None
+    op:            Operation,
+    document:      String,
+    extensions:    Option[GraphQLExtensions] = None,
+    operationName: Option[String]            = None
   ): Stream[F, Result[Json]] = {
     val _ = extensions
-    runInterpreter(op)
+    // Decorate the current span with GraphQL semantic attributes.
+    Stream.exec(
+      T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(op, document, operationName)))
+    ) ++ runInterpreter(op)
   }
 
-  // Direct, non-virtual entry into the grackle interpreter. Both `query` and
-  // `subscribe` delegate here so that subclasses overriding only `subscribe`
-  // (e.g. to add a subscription-specific span) don't accidentally wrap one-off
-  // `query` calls as well.
   private def runInterpreter(op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
 

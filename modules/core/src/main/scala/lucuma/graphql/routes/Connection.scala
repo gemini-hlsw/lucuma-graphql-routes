@@ -138,11 +138,13 @@ object Connection {
         )
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
-        val parseResult = service.parse(raw.query.value, raw.operationName, raw.variables)
+        val document    = raw.query.value
+        val parseResult = service.parse(document, raw.operationName, raw.variables)
         val ext         = raw.extensions
+        val name        = raw.operationName
         val action = parseResult match {
-          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, ext) else execute(id, op, ext)
-          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, ext) else execute(id, op, ext) // n.b. warnings on subscribe are lost
+          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, ext, name) else execute(id, op, document, ext, name)
+          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, ext, name) else execute(id, op, document, ext, name) // n.b. warnings on subscribe are lost
           case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).asRight.some)
           case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).asRight.some)
         }
@@ -152,15 +154,27 @@ object Connection {
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
         (this, subscriptions.remove(id))
 
-      def subscribe(id: String, request: Operation, extensions: Option[GraphQLExtensions]): F[Unit] =
+      def subscribe(
+        id:            String,
+        request:       Operation,
+        document:      String,
+        extensions:    Option[GraphQLExtensions],
+        operationName: Option[String]
+      ): F[Unit] =
         T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
           _.addAttributes(service.props*) >>
-            subscriptions.add(id, service.subscribe(request, extensions))
+            subscriptions.add(id, service.subscribe(request, document, extensions, operationName))
 
-      def execute(id: String, request: Operation, extensions: Option[GraphQLExtensions]): F[Unit] =
+      def execute(
+        id:            String,
+        request:       Operation,
+        document:      String,
+        extensions:    Option[GraphQLExtensions],
+        operationName: Option[String]
+      ): F[Unit] =
         T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
           _.addAttributes(service.props*) >>
-            service.query(request, extensions).flatMap { r =>
+            service.query(request, document, extensions, operationName).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
                 case Left(error) => send(error.asRight.some)
