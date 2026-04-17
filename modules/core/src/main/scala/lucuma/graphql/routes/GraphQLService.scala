@@ -16,6 +16,7 @@ import grackle.Result
 import io.circe.Json
 import io.circe.JsonObject
 import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.trace.SpanKind
 import org.typelevel.otel4s.trace.Tracer
 
 /**
@@ -35,7 +36,11 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def query(op: Operation, extensions: Option[GraphQLExtensions] = None): F[Result[Json]] = {
     val _ = extensions
     // I wonder if we should truncate the query
-    T.span("graphql", Attribute("graphql.query", op.query.render)).surround:
+    T.spanBuilder("graphql")
+      .withSpanKind(SpanKind.Server)
+      .addAttribute(Attribute("graphql.query", op.query.render))
+      .build
+      .surround:
       runInterpreter(op).compile.toList.map {
         case List(e) => e
         case other   =>
