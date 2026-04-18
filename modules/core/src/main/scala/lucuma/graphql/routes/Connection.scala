@@ -161,8 +161,9 @@ object Connection {
         extensions:    Option[GraphQLExtensions],
         operationName: Option[String]
       ): F[Unit] =
-        T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
-          _.addAttributes(service.props*) >>
+        T.withCurrentSpanOrNoop: span =>
+          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
+            span.addAttributes(service.props*) >>
             subscriptions.add(id, service.subscribe(request, document, extensions, operationName))
 
       def execute(
@@ -172,8 +173,9 @@ object Connection {
         extensions:    Option[GraphQLExtensions],
         operationName: Option[String]
       ): F[Unit] =
-        T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
-          _.addAttributes(service.props*) >>
+        T.withCurrentSpanOrNoop: span =>
+          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
+            span.addAttributes(service.props*) >>
             service.query(request, document, extensions, operationName).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
