@@ -108,7 +108,7 @@ object Routes {
 
 }
 
-class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
+class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
 
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
@@ -123,9 +123,9 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   ): F[Response[F]] =
     vars0.sequence.fold(
       errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
-      // No extension for on offs
+      // GET carries no extensions, so no remote trace context to join.
       vars   =>
-        service.parse(query, op, vars).flatTraverse(service.query(_, query, none, op)).flatMap(toResponse)
+        service.parse(query, op, vars).flatTraverse(service.query(_, query, op)).flatMap(toResponse)
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
@@ -137,7 +137,7 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       vars    = obj("variables").flatMap(_.asObject)
       ext     = obj("extensions").flatMap(_.asObject)
       parsed  = service.parse(query, op, vars)
-      result <- parsed.traverse(service.query(_, query, ext, op)).map(_.flatten)
+      result <- parsed.traverse(p => joinRemote(ext.traceCarrier)(service.query(p, query, op))).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
 

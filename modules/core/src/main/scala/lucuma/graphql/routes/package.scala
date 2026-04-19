@@ -15,8 +15,23 @@ import grackle.Problem
 import grackle.Result
 import grackle.Result.*
 import io.circe.Json
+import org.typelevel.otel4s.trace.Tracer
 
 package object routes {
+
+  // Extract W3C trace context headers (traceparent, tracestate) from the GraphQL
+  // `extensions` object so otel4s can re-parent spans on the client.
+  extension (extensions: Option[GraphQLExtensions])
+    private[routes] def traceCarrier: Map[String, String] =
+      extensions.fold(Map.empty):
+        _.toMap
+          .collect { case (k, v) if v.isString => k -> v.asString.orEmpty }
+          .filter((_, v) => v.nonEmpty)
+
+  // Only call it when we have a remote context; otherwise keep the current span context.
+  private[routes] def joinRemote[F[_]: Tracer, A](carrier: Map[String, String])(fa: F[A]): F[A] =
+    if carrier.contains("traceparent") then Tracer[F].joinOrRoot(carrier)(fa) else fa
+
 
   def mkGraphqlError(p: Problem): GraphQLError =
     GraphQLError(

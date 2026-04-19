@@ -9,7 +9,6 @@ import cats.effect.Concurrent
 import cats.effect.Ref
 import cats.effect.std.Queue
 import cats.syntax.all.*
-import clue.model.GraphQLExtensions
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromClient.*
@@ -140,15 +139,16 @@ object Connection {
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
         val document    = raw.query.value
         val parseResult = service.parse(document, raw.operationName, raw.variables)
-        val ext         = raw.extensions
         val name        = raw.operationName
         val action = parseResult match {
-          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, ext, name) else execute(id, op, document, ext, name)
-          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, ext, name) else execute(id, op, document, ext, name) // n.b. warnings on subscribe are lost
+          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name)
+          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name) // n.b. warnings on subscribe are lost
           case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).asRight.some)
           case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).asRight.some)
         }
-        (this, action)
+        // Re-parent server spans on the client's remote context
+        // This is valid if the client span has a W3C traceparent value in extensions)
+        (this, joinRemote(raw.extensions.traceCarrier)(action))
       }
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
@@ -158,25 +158,23 @@ object Connection {
         id:            String,
         request:       Operation,
         document:      String,
-        extensions:    Option[GraphQLExtensions],
         operationName: Option[String]
       ): F[Unit] =
         T.withCurrentSpanOrNoop: span =>
           span.addAttributes(Attribute("connection.fromclient.id", id)) >>
             span.addAttributes(service.props*) >>
-            subscriptions.add(id, service.subscribe(request, document, extensions, operationName))
+            subscriptions.add(id, service.subscribe(request, document, operationName))
 
       def execute(
         id:            String,
         request:       Operation,
         document:      String,
-        extensions:    Option[GraphQLExtensions],
         operationName: Option[String]
       ): F[Unit] =
         T.withCurrentSpanOrNoop: span =>
           span.addAttributes(Attribute("connection.fromclient.id", id)) >>
             span.addAttributes(service.props*) >>
-            service.query(request, document, extensions, operationName).flatMap { r =>
+            service.query(request, document, operationName).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
                 case Left(error) => send(error.asRight.some)

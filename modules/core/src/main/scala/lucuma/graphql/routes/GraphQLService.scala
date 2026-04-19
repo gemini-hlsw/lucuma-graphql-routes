@@ -6,7 +6,6 @@ package lucuma.graphql.routes
 import cats.MonadThrow
 import cats.data.NonEmptyChain
 import cats.syntax.all.*
-import clue.model.GraphQLExtensions
 import fs2.Compiler
 import fs2.Stream
 import grackle.Mapping
@@ -67,10 +66,8 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def query(
     op:            Operation,
     document:      String,
-    extensions:    Option[GraphQLExtensions] = None,
-    operationName: Option[String]            = None
-  ): F[Result[Json]] = {
-    val _ = extensions
+    operationName: Option[String] = None
+  ): F[Result[Json]] =
     T.spanBuilder("graphql")
       .withSpanKind(SpanKind.Server) // it is assumed we run this on the serevr
       .addAttributes(graphqlAttributes(op, document, operationName))
@@ -83,20 +80,16 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
               GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
             )
         }
-  }
 
   def subscribe(
     op:            Operation,
     document:      String,
-    extensions:    Option[GraphQLExtensions] = None,
-    operationName: Option[String]            = None
-  ): Stream[F, Result[Json]] = {
-    val _ = extensions
+    operationName: Option[String] = None
+  ): Stream[F, Result[Json]] =
     // Decorate the current span with GraphQL semantic attributes.
     Stream.exec(
       T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(op, document, operationName)))
     ) ++ runInterpreter(op)
-  }
 
   private def runInterpreter(op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
