@@ -38,6 +38,12 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
     mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
+  private val MaxDocumentLength = 1024
+
+  private def truncateDocument(doc: String): String =
+    if doc.length <= MaxDocumentLength then doc
+    else s"${doc.take(MaxDocumentLength)}... (truncated at $MaxDocumentLength} of ${doc.length} chars)"
+
   // OTEL attributes for a GraphQL operation; see
   // https://opentelemetry.io/docs/specs/semconv/graphql/graphql-spans/
   private def graphqlAttributes(
@@ -52,7 +58,7 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
 
     Attributes(
       (List(
-        Attribute(GraphqlDocument, document),
+        Attribute(GraphqlDocument, truncateDocument(document)),
         Attribute(GraphqlOperationType, opType),
       ) ++ operationName.map(Attribute(GraphqlOperationName, _)) ++ props)*
     )
