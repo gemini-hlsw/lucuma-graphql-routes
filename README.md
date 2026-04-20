@@ -37,3 +37,12 @@ The resulting `HttpRoutes` will serve the following endpoints:
 - `Root / "playground.html"` serving the [GraphQL Playground](https://github.com/graphql/graphql-playground) HTML application.
 
 The `"graphql"`, `"ws"`, and `"playground.html"` segments are defaults; you can specify different values when you call `Routes.forService`.
+
+## Tracing
+
+This library uses [otel4s](https://typelevel.org/otel4s/) for OpenTelemetry tracing. A `Tracer[F]` must be in scope when constructing routes. Each operation produces a `graphql` span with `graphql.document`, `graphql.operation.type`, and `graphql.operation.name` semconv attributes.
+
+Trace context propagation differs by transport:
+
+- **HTTP (queries/mutations)**: The standard `traceparent` HTTP header is propagated automatically by the http4s otel4s middleware in the calling application.
+- **WebSocket subscriptions**: The WebSocket endpoint uses the [graphql-transport-ws](https://github.com/graphql/graphql-over-http/blob/main/rfcs/GraphQLOverWebSocket.md) protocol. If the client includes a W3C `traceparent` in the `extensions` field of the `subscribe` message, this library extracts it and re-parents the server span on the client's remote trace context, enabling end-to-end distributed tracing per subscription operation.

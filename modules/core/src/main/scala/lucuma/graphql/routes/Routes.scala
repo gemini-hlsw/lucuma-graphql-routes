@@ -157,9 +157,9 @@ class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option
 
     def logFromServer(msg: Either[GraphQLWSError, FromServer]): F[Unit] =
       msg match {
-        case Left(err)                 => L.warn(s"Sending error to client: ${err.code} ${err.reason} - Closing connection")
-        case Right(FromServer.Ping(_)) => L.debug(s"Sending Ping")
-        case Right(msg)                => L.debug(s"Sending to client: ${trimmedMessage(msg)}")
+        case Left(err)                 => warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
+        case Right(FromServer.Ping(_)) => debug"Sending Ping"
+        case Right(msg)                => debug"Sending to client: ${trimmedMessage(msg)}"
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -170,8 +170,8 @@ class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option
       val RedactedAuth = """$1 <REDACTED>"""
 
       f match {
-        case Text(s, last) => L.debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-        case _             => L.debug(s"Received message from client: $f")
+        case Text(s, last) => debug"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}"
+        case _             => debug"Received message from client: $f"
       }
     }
 
