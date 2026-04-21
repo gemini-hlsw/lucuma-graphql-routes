@@ -108,7 +108,7 @@ object Routes {
 
 }
 
-class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
+class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
 
   val dsl: Http4sDsl[F] = new Http4sDsl[F]{}
   import dsl._
@@ -123,7 +123,9 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
   ): F[Response[F]] =
     vars0.sequence.fold(
       errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
-      vars   => service.parse(query, op, vars).flatTraverse(service.query).flatMap(toResponse)
+      // GET carries no extensions, so no remote trace context to join.
+      vars   =>
+        service.parse(query, op, vars).flatTraverse(service.query(_, query, op)).flatMap(toResponse)
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
@@ -131,21 +133,22 @@ class HttpRouteHandler[F[_]: Temporal](service: GraphQLService[F]) {
       body   <- req.as[Json]
       obj    <- body.asObject.liftTo[F](InvalidMessageBodyFailure("Invalid GraphQL query"))
       query  <- obj("query").flatMap(_.asString).liftTo[F](InvalidMessageBodyFailure("Missing query field"))
-      op     =  obj("operationName").flatMap(_.asString)
-      vars   =  obj("variables").flatMap(_.asObject)
-      parsed =  service.parse(query, op, vars)
-      result <- parsed.traverse(service.query).map(_.flatten)
+      op      = obj("operationName").flatMap(_.asString)
+      vars    = obj("variables").flatMap(_.asObject)
+      ext     = obj("extensions").flatMap(_.asObject)
+      parsed  = service.parse(query, op, vars)
+      result <- parsed.traverse(p => joinRemote(ext.traceCarrier)(service.query(p, query, op))).map(_.flatten)
       resp   <- toResponse(result)
     } yield resp
 
 }
 
-class WsRouteHandler[F[_]: Logger: Temporal: Tracer](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
+class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
 
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = Tracer[F].span("graphql.routes.webSocketConnection").surround {
+  def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = T.span("graphql.routes.webSocketConnection").surround {
 
     val keepAliveStream: Stream[F, FromServer] =
       Stream
@@ -154,9 +157,9 @@ class WsRouteHandler[F[_]: Logger: Temporal: Tracer](service: Option[Authorizati
 
     def logFromServer(msg: Either[GraphQLWSError, FromServer]): F[Unit] =
       msg match {
-        case Left(err)                 => Logger[F].warn(s"Sending error to client: ${err.code} ${err.reason} - Closing connection")
-        case Right(FromServer.Ping(_)) => Logger[F].debug(s"Sending Ping")
-        case Right(msg)                  => Logger[F].debug(s"Sending to client: ${trimmedMessage(msg)}")
+        case Left(err)                 => warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
+        case Right(FromServer.Ping(_)) => debug"Sending Ping"
+        case Right(msg)                => debug"Sending to client: ${trimmedMessage(msg)}"
       }
 
     def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
@@ -167,8 +170,8 @@ class WsRouteHandler[F[_]: Logger: Temporal: Tracer](service: Option[Authorizati
       val RedactedAuth = """$1 <REDACTED>"""
 
       f match {
-        case Text(s, last) => Logger[F].debug(s"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}")
-        case _             => Logger[F].debug(s"Received message from client: $f")
+        case Text(s, last) => debug"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}"
+        case _             => debug"Received message from client: $f"
       }
     }
 
@@ -189,7 +192,7 @@ class WsRouteHandler[F[_]: Logger: Temporal: Tracer](service: Option[Authorizati
             .evalTap(logFromServer)
             .map{
               case Left(err) => Close(err.code, err.reason).orElse(Close(err.code)).toOption.get
-              case Right(m) => Text(m.asJson.spaces2)
+              case Right(m)  => Text(m.asJson.spaces2)
             },
 
           // Input from client

@@ -137,28 +137,44 @@ object Connection {
         )
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
-        val parseResult = service.parse(raw.query.value, raw.operationName, raw.variables)
+        val document    = raw.query.value
+        val parseResult = service.parse(document, raw.operationName, raw.variables)
+        val name        = raw.operationName
         val action = parseResult match {
-          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op)
-          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op) else execute(id, op) // n.b. warnings on subscribe are lost
+          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name)
+          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name) // n.b. warnings on subscribe are lost
           case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).asRight.some)
           case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).asRight.some)
         }
-        (this, action)
+        // Re-parent server spans on the client's remote context
+        // This is valid if the client span has a W3C traceparent value in extensions)
+        (this, joinRemote(raw.extensions.traceCarrier)(action))
       }
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
         (this, subscriptions.remove(id))
 
-      def subscribe(id: String, request: Operation): F[Unit] =
-        T.span("connection.subscribe", Attribute("connection.fromclient.id", id)).use:
-          _.addAttributes(service.props*) >>
-            subscriptions.add(id, service.subscribe(request))
+      def subscribe(
+        id:            String,
+        request:       Operation,
+        document:      String,
+        operationName: Option[String]
+      ): F[Unit] =
+        T.withCurrentSpanOrNoop: span =>
+          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
+            span.addAttributes(service.props*) >>
+            subscriptions.add(id, service.subscribe(request, document, operationName))
 
-      def execute(id: String, request: Operation): F[Unit] =
-        T.span("connection.execute", Attribute("connection.fromclient.id", id)).use:
-          _.addAttributes(service.props*) >>
-            service.query(request).flatMap { r =>
+      def execute(
+        id:            String,
+        request:       Operation,
+        document:      String,
+        operationName: Option[String]
+      ): F[Unit] =
+        T.withCurrentSpanOrNoop: span =>
+          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
+            span.addAttributes(service.props*) >>
+            service.query(request, document, operationName).flatMap { r =>
               mkFromServer(r, id).flatMap {
                 case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
                 case Left(error) => send(error.asRight.some)
