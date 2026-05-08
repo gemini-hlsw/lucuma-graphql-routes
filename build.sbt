@@ -1,9 +1,8 @@
 val circeVersion               = "0.14.15"
-val clueVersion                = "0.52.0"
+val clueVersion                = "0.53.0"
 val fs2Version                 = "3.12.0"
 val grackleVersion             = "0.26.0"
 val http4sVersion              = "0.23.34"
-val http4sBlazeVersion         = "0.23.17"
 val http4sJdkHttpClientVersion = "0.10.0"
 val log4catsVersion            = "2.8.0"
 val logbackVersion             = "1.5.32"
@@ -27,22 +26,22 @@ lazy val core = project
   .settings(
     name := "lucuma-graphql-routes",
     libraryDependencies ++= Seq(
-      "edu.gemini"     %% "clue-model"                  % clueVersion,
-      "org.http4s"     %% "http4s-circe"                % http4sVersion,
-      "org.http4s"     %% "http4s-dsl"                  % http4sVersion,
-      "org.http4s"     %% "http4s-server"               % http4sVersion,
-      "org.typelevel"  %% "otel4s-core-trace"           % otel4sVersion,
-      "org.typelevel"  %% "otel4s-semconv-experimental" % otel4sVersion,
-      "org.typelevel"  %% "grackle-core"                % grackleVersion,
-      "org.typelevel"  %% "log4cats-core"               % log4catsVersion,
-      "ch.qos.logback" %  "logback-classic"             % logbackVersion             % Test,
-      "edu.gemini"     %% "clue-http4s"                 % clueVersion                % Test,
-      "io.circe"       %% "circe-literal"               % circeVersion               % Test,
-      "org.http4s"     %% "http4s-blaze-server"         % http4sBlazeVersion         % Test,
-      "org.http4s"     %% "http4s-jdk-http-client"      % http4sJdkHttpClientVersion % Test,
-      "org.scalameta"  %% "munit"                       % munitVersion               % Test,
-      "org.typelevel"  %% "grackle-circe"               % grackleVersion             % Test,
-      "org.typelevel"  %% "log4cats-slf4j"              % log4catsVersion            % Test,
-      "org.typelevel"  %% "munit-cats-effect"           % munitCatsEffectVersion     % Test,
-    ),
+      "edu.gemini"    %% "clue-model"                  % clueVersion,
+      "org.http4s"    %% "http4s-circe"                % http4sVersion,
+      "org.http4s"    %% "http4s-dsl"                  % http4sVersion,
+      "org.http4s"    %% "http4s-server"               % http4sVersion,
+      "org.typelevel" %% "otel4s-core-trace"           % otel4sVersion,
+      "org.typelevel" %% "otel4s-semconv-experimental" % otel4sVersion,
+      "org.typelevel" %% "grackle-core"                % grackleVersion,
+      "org.typelevel" %% "log4cats-core"               % log4catsVersion,
+      "ch.qos.logback" % "logback-classic"             % logbackVersion             % Test,
+      "edu.gemini"    %% "clue-http4s"                 % clueVersion                % Test,
+      "io.circe"      %% "circe-literal"               % circeVersion               % Test,
+      "org.http4s"    %% "http4s-ember-server"         % http4sVersion              % Test,
+      "org.http4s"    %% "http4s-jdk-http-client"      % http4sJdkHttpClientVersion % Test,
+      "org.scalameta" %% "munit"                       % munitVersion               % Test,
+      "org.typelevel" %% "grackle-circe"               % grackleVersion             % Test,
+      "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
+      "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
+    )
   )
