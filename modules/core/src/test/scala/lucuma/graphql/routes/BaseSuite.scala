@@ -22,13 +22,13 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
-import org.http4s.blaze.server.BlazeServerBuilder
+import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
 import org.http4s.jdkhttpclient.JdkWSClient
 import org.http4s.server.Server
 import org.http4s.server.websocket.WebSocketBuilder2
-import org.http4s.{ Uri as Http4sUri, * }
+import org.http4s.{Uri as Http4sUri, *}
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.otel4s.trace.Tracer
@@ -75,10 +75,10 @@ abstract class BaseSuite extends CatsEffectSuite:
 
   private def server: Resource[IO, Server] =
     httpApp.flatMap: app =>
-      BlazeServerBuilder[IO]
+      EmberServerBuilder
+        .default[IO]
         .withHttpWebSocketApp(app)
-        .bindAny()
-        .resource
+        .build
 
   private def fetchClient(bearerToken: Option[String])(svr: Server): Resource[IO, FetchClient[IO, Nothing]] =
     for
