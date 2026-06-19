@@ -8,7 +8,7 @@ val log4catsVersion            = "2.8.0"
 val logbackVersion             = "1.5.34"
 val munitVersion               = "1.3.3"
 val munitCatsEffectVersion     = "2.2.0"
-val otel4sVersion              = "1.0.0"
+val otel4sVersion              = "1.0.1"
 
 enablePlugins(NoPublishPlugin)
 
