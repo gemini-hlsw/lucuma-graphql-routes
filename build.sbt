@@ -1,4 +1,4 @@
-val circeVersion               = "0.14.15"
+val circeVersion               = "0.14.16"
 val clueVersion                = "0.54.0"
 val fs2Version                 = "3.12.0"
 val grackleVersion             = "0.28.0"
