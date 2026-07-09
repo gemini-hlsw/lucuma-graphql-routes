@@ -6,7 +6,7 @@ val http4sVersion              = "0.23.36"
 val http4sJdkHttpClientVersion = "0.10.0"
 val log4catsVersion            = "2.8.0"
 val logbackVersion             = "1.5.38"
-val munitVersion               = "1.3.3"
+val munitVersion               = "1.3.4"
 val munitCatsEffectVersion     = "2.2.0"
 val otel4sVersion              = "1.0.1"
 
