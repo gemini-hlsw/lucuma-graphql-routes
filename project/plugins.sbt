@@ -1,1 +1,1 @@
-addSbtPlugin("edu.gemini"       % "sbt-lucuma-lib" % "0.14.19")
+addSbtPlugin("edu.gemini"       % "sbt-lucuma-lib" % "0.14.20")
