@@ -9,6 +9,7 @@ import cats.effect.unsafe.IORuntime
 import cats.effect.unsafe.IORuntimeConfig
 import cats.implicits.*
 import clue.FetchClient
+import clue.GraphQLDocument
 import clue.GraphQLOperation
 import clue.ResponseException
 import clue.http4s.Http4sHttpBackend
@@ -103,7 +104,10 @@ abstract class BaseSuite extends CatsEffectSuite:
   override def munitFixtures =
     List(serverFixture)
 
-  private case class Operation(document: String) extends GraphQLOperation.Typed[Nothing, JsonObject, Json]
+  // Tests supply the query as a plain runtime `String`, so it skips the `gql` interpolator's
+  // compile-time checks — there is nothing to check, no subqueries are spliced.
+  private case class Operation(query: String) extends GraphQLOperation.Typed[Nothing, JsonObject, Json]:
+    override val document = GraphQLDocument.unsafeFromString(query)
 
   def connection(cop: ClientOption, bearerToken: Option[String]): Server => Resource[IO, FetchClient[IO, Nothing]] =
     cop match
