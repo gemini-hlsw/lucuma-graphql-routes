@@ -12,6 +12,7 @@ import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json.given
 import fs2.Stream
+import grackle.Operation
 import grackle.Result
 import io.circe.*
 import io.circe.syntax.*
@@ -116,6 +117,28 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
   def toResponse(result: Result[Json]): F[Response[F]] =
     Ok(service.mapping.mkResponse(result))
 
+  // Returns a 422 Unprocessable Content response with a well-formed GraphQL JSON error body.
+  // Used by both HTTP handlers to reject subscription operations.
+  private def subscriptionRejection: F[Response[F]] =
+    UnprocessableContent(
+      service.mapping.mkResponse(
+        Result.failure[Json](
+          "Subscription operations are not supported over HTTP. Use the WebSocket transport."
+        )
+      )
+    )
+
+  // If the parsed operation is a subscription, return a 422 rejection immediately.
+  // Otherwise invoke `proceed`.  Both Success and Warning carry an Operation value.
+  private def rejectSubscription(
+    parsed: Result[Operation]
+  )(proceed: => F[Response[F]]): F[Response[F]] =
+    parsed match {
+      case Result.Success(op) if service.isSubscription(op)    => subscriptionRejection
+      case Result.Warning(_, op) if service.isSubscription(op) => subscriptionRejection
+      case _                                                    => proceed
+    }
+
   def oneOffGet(
     query: String,
     op:    Option[String],
@@ -124,8 +147,12 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
     vars0.sequence.fold(
       errors => Ok(errors.map(_.sanitized).mkString_("", ",", "")), // in GraphQL errors are reported in a 200 Ok response (!)
       // GET carries no extensions, so no remote trace context to join.
-      vars   =>
-        service.parse(query, op, vars).flatTraverse(service.query(_, query, op)).flatMap(toResponse)
+      vars => {
+        val parsed = service.parse(query, op, vars)
+        rejectSubscription(parsed) {
+          parsed.flatTraverse(service.query(_, query, op)).flatMap(toResponse)
+        }
+      }
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
@@ -137,8 +164,11 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
       vars    = obj("variables").flatMap(_.asObject)
       ext     = obj("extensions").flatMap(_.asObject)
       parsed  = service.parse(query, op, vars)
-      result <- parsed.traverse(p => joinRemote(ext.traceCarrier)(service.query(p, query, op))).map(_.flatten)
-      resp   <- toResponse(result)
+      resp   <- rejectSubscription(parsed) {
+                  parsed.traverse(p => joinRemote(ext.traceCarrier)(service.query(p, query, op)))
+                    .map(_.flatten)
+                    .flatMap(toResponse)
+                }
     } yield resp
 
 }

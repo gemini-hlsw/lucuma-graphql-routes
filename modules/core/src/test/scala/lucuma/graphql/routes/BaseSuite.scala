@@ -98,7 +98,7 @@ abstract class BaseSuite extends CatsEffectSuite:
       _   <- Resource.make(sc.connect(ps.pure[IO]))(_ => sc.disconnect())
     yield sc
 
-  private lazy val serverFixture: IOFixture[Server] =
+  protected lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)
 
   override def munitFixtures =
