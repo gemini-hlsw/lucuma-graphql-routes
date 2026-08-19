@@ -42,6 +42,8 @@ class SubscriptionsSuite extends CatsEffectSuite:
 
   private val ok: Result[Json] = Result(Json.fromString("ok"))
 
+  private def boom: Throwable = new RuntimeException("boom")
+
   private val delayingLogger: Logger[IO] =
     BaseSuite.logger.mapK(new (IO ~> IO) { def apply[A](fa: IO[A]): IO[A] = IO.sleep(200.milliseconds) *> fa })
 
@@ -78,6 +80,31 @@ class SubscriptionsSuite extends CatsEffectSuite:
         _           <- settle
         obt         <- log.get
       yield assertEquals(obt, List("next:1", "next:1", "complete:1"))
+
+  test("a stream that fails sends an Error after the results, and no Complete"):
+    run:
+      for
+        (log, send) <- recorder
+        subs        <- Subscriptions[IO](send)
+        _           <- subs.add("1", Stream(ok, ok).covary[IO] ++ Stream.raiseError[IO](boom))
+        _           <- settle
+        obt         <- log.get
+      yield assertEquals(obt, List("next:1", "next:1", "error:1"))
+
+  test("a stream that fails before the map entry exists still produces an Error"):
+    given Logger[IO] = delayingLogger
+    run:
+      for
+        (log, send) <- recorder
+        subs        <- Subscriptions[IO](send)
+        _           <- subs.add("1", Stream.raiseError[IO](boom))
+        _           <- settle
+        // A leaked entry would make one of these send a Complete for a dead subscription.
+        _           <- subs.remove("1")
+        _           <- subs.removeAll
+        _           <- settle
+        obt         <- log.get
+      yield assertEquals(obt, List("error:1"))
 
   test("no Complete follows an Error, because Error ends the operation"):
     // `replySink` turns a Failure result into an Error message and the stream continues. The

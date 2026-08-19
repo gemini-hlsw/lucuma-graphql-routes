@@ -98,6 +98,14 @@ object Subscriptions {
                            err <- errorSent.get
                            _   <- send(Complete(id).some).whenA(own && !err)
                          yield ()
+            // A failure of the source stream is reported to the client as a terminal `error`
+            // message. No `complete` follows it.
+            error      = (t: Throwable) =>
+                           for
+                             own <- removeOwn
+                             err <- errorSent.get
+                             _   <- send(Error(id, mkGraphqlErrors(t)).some).whenA(own && !err)
+                           yield ()
             es         = events.through(replySink(id, errorSent)).interruptWhen(in)
             fiber     <- Deferred[F, Fiber[F, Throwable, Unit]]
             _         <- subscriptions.update(_.updated(id, new Subscription(fiber, r)))
@@ -105,7 +113,8 @@ object Subscriptions {
             f         <- es.compile.drain
                            .guaranteeCase:
                              case Outcome.Succeeded(_) => complete
-                             case _                    => removeOwn.void
+                             case Outcome.Errored(t)   => error(t)
+                             case Outcome.Canceled()   => removeOwn.void
                            .start
             _         <- fiber.complete(f)
             _         <- Logger[F].debug(s"started event stream $id")
