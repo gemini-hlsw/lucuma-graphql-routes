@@ -17,6 +17,7 @@ import clue.http4s.Http4sHttpClient
 import clue.http4s.Http4sWebSocketBackend
 import clue.http4s.Http4sWebSocketClient
 import clue.websocket.WebSocketClient
+import fs2.Stream
 import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.Json
@@ -55,6 +56,8 @@ object BaseSuite:
     case e: ResponseException[Any]  @unchecked => ()
     case e => print("OdbSuite.reportFailure: "); e.printStackTrace
 
+  val logger: Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")
+
   // a runtime that is constructed the same as global, but lets us see unhandled errors (above)
   val runtime: IORuntime =
     val (compute, _, _) = IORuntime.createWorkStealingComputeThreadPool(reportFailure = reportFailure)
@@ -70,7 +73,7 @@ abstract class BaseSuite extends CatsEffectSuite:
 
   override lazy val munitIoRuntime: IORuntime = BaseSuite.runtime
 
-  given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")
+  given Logger[IO] = BaseSuite.logger
   given Tracer[IO] = Tracer.noop[IO]
 
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
@@ -90,7 +93,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     val hs  = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
     Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
 
-  private def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
+  protected def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
     val sbe = Http4sWebSocketBackend[IO](wsClientFixture())
     val uri = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
     val ps  = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
@@ -114,7 +117,7 @@ abstract class BaseSuite extends CatsEffectSuite:
 
   // Tests supply the query as a plain runtime `String`, so it skips the `gql` interpolator's
   // compile-time checks — there is nothing to check, no subqueries are spliced.
-  private case class Operation(query: String) extends GraphQLOperation.Typed[Nothing, JsonObject, Json]:
+  protected case class Operation(query: String) extends GraphQLOperation.Typed[Nothing, JsonObject, Json]:
     override val document = GraphQLDocument.unsafeFromString(query)
 
   def connection(cop: ClientOption, bearerToken: Option[String]): Server => Resource[IO, FetchClient[IO, Nothing]] =
@@ -148,6 +151,31 @@ abstract class BaseSuite extends CatsEffectSuite:
             variables.fold(req.apply)(req.withInput).raiseGraphQLErrors
         op
 
+  // Allocates a subscription on an open connection. Returns the result stream and the
+  // client-side cleanup action, which sends `complete` from client to server, separately.
+  protected def allocateSubscription(
+    conn:      WebSocketClient[IO, Nothing],
+    query:     String,
+    variables: Option[JsonObject],
+    onError:   ResponseException[Json] => IO[Unit] = _ => IO.unit
+  ): IO[(Stream[IO, Json], IO[Unit])] =
+    val req = conn.subscribe(Operation(query))
+    variables
+      .fold(req.apply)(req.withInput)
+      .raiseFirstNoDataError
+      .handleGraphQLErrors(onError)
+      .allocated
+
+  // Opens a connection and allocates a subscription on it. The Resource manages the
+  // connection lifetime. The returned cleanup action ends only the subscription.
+  protected def openSubscription(
+    bearerToken: Option[String],
+    query:       String,
+    variables:   Option[JsonObject]
+  ): Resource[IO, (Stream[IO, Json], IO[Unit])] =
+    streamingClient(bearerToken)(serverFixture())
+      .evalMap(allocateSubscription(_, query, variables))
+
   def subscription(
     bearerToken: Option[String],
     query: String,
@@ -158,12 +186,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     Supervisor[IO].use: sup =>
       streamingClient(bearerToken)(serverFixture())
         .use: conn =>
-          val req = conn.subscribe(Operation(query))
-          variables
-            .fold(req.apply)(req.withInput)
-            .raiseFirstNoDataError
-            .handleGraphQLErrors(onError)
-            .allocated
+          allocateSubscription(conn, query, variables, onError)
             .flatMap: (sub, cleanup) =>
               for
                 fib <- sup.supervise(sub.compile.toList)
