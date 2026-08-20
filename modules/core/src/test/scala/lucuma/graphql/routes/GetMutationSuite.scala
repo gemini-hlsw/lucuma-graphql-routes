@@ -11,9 +11,11 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Encoder
 import io.circe.Json
+import io.circe.parser
 import org.http4s.*
 import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
+import org.typelevel.ci.*
 
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -92,6 +94,18 @@ class GetMutationSuite extends BaseSuite:
     rawGet(mutationDoc).map { (_, allow) =>
       assertEquals(allow, Some(Allow(Method.POST)))
     }
+
+  // The specification requires a well-formed GraphQL response body with the GraphQL media type.
+  test("GET a mutation response carries a GraphQL errors body"):
+    rawResponse(uri => Request[IO](Method.GET, uri.withQueryParam("query", mutationDoc)))
+      .map { (_, headers, text) =>
+        val contentType = headers.get(ci"Content-Type").map(_.head.value)
+        assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+        val body   = parser.parse(text).getOrElse(Json.Null)
+        val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
+        assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
+        assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
+      }
 
   // This is the most important assertion: the mutation side-effect must NOT
   // happen when the request is rejected at the HTTP layer.

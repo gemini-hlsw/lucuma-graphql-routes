@@ -13,7 +13,7 @@ val otel4sVersion              = "1.1.0"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion       := "0.13"
+ThisBuild / tlBaseVersion       := "0.14"
 ThisBuild / scalaVersion        := "3.8.4"
 ThisBuild / crossScalaVersions  := Seq("3.8.4")
 

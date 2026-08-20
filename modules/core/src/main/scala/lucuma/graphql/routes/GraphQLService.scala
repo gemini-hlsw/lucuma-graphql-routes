@@ -37,11 +37,18 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
     mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
 
+  /**
+   * True if the GraphQL document parses. The HTTP routes use this to tell a syntax error, which
+   * gives status 400, from a validation error, which gives status 422.
+   */
+  def parses(document: String): Boolean =
+    mapping.graphQLParser.parseText(document).hasValue
+
   private val MaxDocumentLength = 1024
 
   private def truncateDocument(doc: String): String =
     if doc.length <= MaxDocumentLength then doc
-    else s"${doc.take(MaxDocumentLength)}... (truncated at $MaxDocumentLength} of ${doc.length} chars)"
+    else s"${doc.take(MaxDocumentLength)}... (truncated at $MaxDocumentLength of ${doc.length} chars)"
 
   // OTEL attributes for a GraphQL operation; see
   // https://opentelemetry.io/docs/specs/semconv/graphql/graphql-spans/
