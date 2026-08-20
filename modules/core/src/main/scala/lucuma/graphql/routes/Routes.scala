@@ -21,12 +21,14 @@ import org.http4s.Headers
 import org.http4s.HttpRoutes
 import org.http4s.InvalidMessageBodyFailure
 import org.http4s.MediaType
+import org.http4s.Method
 import org.http4s.ParseFailure
 import org.http4s.QueryParamDecoder
 import org.http4s.Request
 import org.http4s.Response
 import org.http4s.circe.*
 import org.http4s.dsl.Http4sDsl
+import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -150,7 +152,13 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](service: GraphQLService[F]) {
       vars => {
         val parsed = service.parse(query, op, vars)
         rejectSubscription(parsed) {
-          parsed.flatTraverse(service.query(_, query, op)).flatMap(toResponse)
+          parsed match {
+            // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
+            // Respond with 405 Method Not Allowed and advertise POST as the allowed method.
+            case Result.Success(operation)    if service.isMutation(operation) => MethodNotAllowed(Allow(Method.POST))
+            case Result.Warning(_, operation) if service.isMutation(operation) => MethodNotAllowed(Allow(Method.POST))
+            case _ => parsed.flatTraverse(service.query(_, query, op)).flatMap(toResponse)
+          }
         }
       }
     )
