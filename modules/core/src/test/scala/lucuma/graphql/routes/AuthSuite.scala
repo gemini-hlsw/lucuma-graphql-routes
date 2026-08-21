@@ -5,7 +5,6 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
-import clue.HttpStatusException
 import clue.RemoteInitializationException
 import fs2.Stream
 import grackle.Result
@@ -13,9 +12,15 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
+import io.circe.parser
 import org.http4s.AuthScheme
 import org.http4s.Credentials
+import org.http4s.Method
+import org.http4s.Request
+import org.http4s.Status
+import org.http4s.circe.*
 import org.http4s.headers.Authorization
+import org.typelevel.ci.*
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
@@ -65,11 +70,22 @@ class AuthSuite extends BaseSuite:
       variables   = None
     )
 
-  test("[http] Missing credentials should raise HttpStatusException."):
-    interceptIO[HttpStatusException](testQuery(None, Http)).map(e => assertEquals(e.status, 403))
+  // The 403 response carries a well-formed GraphQL response with the GraphQL media type, so the
+  // client reads the body and reports the errors in it.
+  test("[http] Missing credentials should raise ResponseException."):
+    interceptGraphQL("Access denied.")(testQuery(None, Http))
 
-  test("[http] Incorrect credentials should raise HttpStatusException."):
-    interceptIO[HttpStatusException](testQuery(Some("steve"), Http)).map(e => assertEquals(e.status, 403))
+  test("[http] Incorrect credentials should raise ResponseException."):
+    interceptGraphQL("Access denied.")(testQuery(Some("steve"), Http))
+
+  test("[http] Missing credentials give 403 with the GraphQL media type and an errors body."):
+    rawResponse(uri => Request[IO](Method.POST, uri).withEntity(json"""{"query": "query { foo }"}"""))
+      .map: (status, headers, body) =>
+        assertEquals(status, Status.Forbidden)
+        val contentType = headers.get(ci"Content-Type").map(_.head.value)
+        assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+        val errors = parser.parse(body).toOption.flatMap(_.hcursor.downField("errors").as[List[Json]].toOption)
+        assertEquals(errors.map(_.size), Some(1), body)
 
   test("[http] Correct credentials should work."):
     testQuery(Some("bob"), Http)
