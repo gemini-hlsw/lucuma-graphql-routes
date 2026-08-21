@@ -14,7 +14,6 @@ import io.circe.Json
 import org.http4s.*
 import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
-import org.http4s.jdkhttpclient.JdkHttpClient
 
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -70,13 +69,11 @@ class GetMutationSuite extends BaseSuite:
     query:         String,
     operationName: Option[String] = None
   ): IO[(Status, Option[Allow])] =
-    Resource.eval(IO(serverFixture())).flatMap { svr =>
-      JdkHttpClient.simple[IO].flatMap { client =>
-        val uri0 = (svr.baseUri / "graphql").withQueryParam("query", query)
-        val uri1 = operationName.fold(uri0)(n => uri0.withQueryParam("operationName", n))
-        client.run(Request[IO](Method.GET, uri1))
-      }
-    }.use(resp => IO.pure((resp.status, resp.headers.get[Allow])))
+    val uri0 = (serverFixture().baseUri / "graphql").withQueryParam("query", query)
+    val uri1 = operationName.fold(uri0)(n => uri0.withQueryParam("operationName", n))
+    httpClientFixture()
+      .run(Request[IO](Method.GET, uri1))
+      .use(resp => IO.pure((resp.status, resp.headers.get[Allow])))
 
   private val mutationDoc = "mutation { increment }"
   private val queryDoc    = "query { ping }"

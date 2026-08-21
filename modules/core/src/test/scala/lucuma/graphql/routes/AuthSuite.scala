@@ -5,6 +5,7 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
+import clue.HttpStatusException
 import clue.RemoteInitializationException
 import fs2.Stream
 import grackle.Result
@@ -14,7 +15,6 @@ import io.circe.Json
 import io.circe.literal.*
 import org.http4s.AuthScheme
 import org.http4s.Credentials
-import org.http4s.client.UnexpectedStatus
 import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
@@ -65,11 +65,11 @@ class AuthSuite extends BaseSuite:
       variables   = None
     )
 
-  test("[http] Missing credentials should raise UnexpectedStatus."):
-    interceptIO[UnexpectedStatus](testQuery(None, Http))
+  test("[http] Missing credentials should raise HttpStatusException."):
+    interceptIO[HttpStatusException](testQuery(None, Http)).map(e => assertEquals(e.status, 403))
 
-  test("[http] Incorrect credentials should raise UnexpectedStatus."):
-    interceptIO[UnexpectedStatus](testQuery(Some("steve"), Http))
+  test("[http] Incorrect credentials should raise HttpStatusException."):
+    interceptIO[HttpStatusException](testQuery(Some("steve"), Http)).map(e => assertEquals(e.status, 403))
 
   test("[http] Correct credentials should work."):
     testQuery(Some("bob"), Http)

@@ -9,7 +9,6 @@ import clue.ResponseException
 import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
-import io.circe.literal.*
 import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
@@ -43,7 +42,7 @@ class ValidationSuite extends BaseSuite:
         bearerToken = None,
         query       = "subscription { x }",
         mutations   = Right(IO.unit),
-        expected    = List(1,2,3).map { n => json"""{ "bar": $n }""" },
+        expected    = Nil,
         variables   = None
       )
 

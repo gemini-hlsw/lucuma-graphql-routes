@@ -23,6 +23,8 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
+import org.http4s.client.Client
+import org.http4s.client.websocket.WSClient
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
@@ -79,30 +81,36 @@ abstract class BaseSuite extends CatsEffectSuite:
       EmberServerBuilder
         .default[IO]
         .withHttpWebSocketApp(app)
+        .withShutdownTimeout(Duration.Zero)
         .build
 
   private def fetchClient(bearerToken: Option[String])(svr: Server): Resource[IO, FetchClient[IO, Nothing]] =
-    for
-      xbe <- JdkHttpClient.simple[IO].map(Http4sHttpBackend[IO](_))
-      uri  = svr.baseUri / "graphql"
-      hs   = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
-      xc  <- Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
-    yield xc
+    val xbe = Http4sHttpBackend[IO](httpClientFixture())
+    val uri = svr.baseUri / "graphql"
+    val hs  = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
+    Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
 
   private def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
+    val sbe = Http4sWebSocketBackend[IO](wsClientFixture())
+    val uri = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
+    val ps  = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
     for
-      sbe <- JdkWSClient.simple[IO].map(Http4sWebSocketBackend[IO](_))
-      uri  = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
-      sc  <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(using Async[IO], Logger[IO], sbe))
-      ps   = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
-      _   <- Resource.make(sc.connect(ps.pure[IO]))(_ => sc.disconnect())
+      sc <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(using Async[IO], Logger[IO], sbe))
+      _  <- Resource.make(sc.connect(ps.pure[IO]))(_ => sc.disconnect())
     yield sc
 
   protected lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)
 
+  protected lazy val httpClientFixture: IOFixture[Client[IO]] =
+    ResourceSuiteLocalFixture("http-client", JdkHttpClient.simple[IO])
+
+  protected lazy val wsClientFixture: IOFixture[WSClient[IO]] =
+    ResourceSuiteLocalFixture("ws-client", JdkWSClient.simple[IO])
+
+  // The clients come first, so that munit closes them before it stops the server.
   override def munitFixtures =
-    List(serverFixture)
+    List(httpClientFixture, wsClientFixture, serverFixture)
 
   // Tests supply the query as a plain runtime `String`, so it skips the `gql` interpolator's
   // compile-time checks — there is nothing to check, no subqueries are spliced.
@@ -133,8 +141,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     variables:   Option[JsonObject],
     client:      ClientOption
   ): IO[Json] =
-    Resource.eval(IO(serverFixture()))
-      .flatMap(connection(client, bearerToken))
+    connection(client, bearerToken)(serverFixture())
       .use: conn =>
         val req = conn.request(Operation(query))
         val op  =
@@ -149,8 +156,7 @@ abstract class BaseSuite extends CatsEffectSuite:
     onError: ResponseException[Json] => IO[Unit] = _ => IO.unit
   ): IO[List[Json]] =
     Supervisor[IO].use: sup =>
-      Resource.eval(IO(serverFixture()))
-        .flatMap(streamingClient(bearerToken))
+      streamingClient(bearerToken)(serverFixture())
         .use: conn =>
           val req = conn.subscribe(Operation(query))
           variables

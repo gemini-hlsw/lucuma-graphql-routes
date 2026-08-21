@@ -16,7 +16,6 @@ import org.http4s.Request
 import org.http4s.Status
 import org.http4s.circe.*
 import org.http4s.headers.Authorization
-import org.http4s.jdkhttpclient.JdkHttpClient
 
 import scala.concurrent.duration.*
 
@@ -64,18 +63,15 @@ class SubscriptionOverHttpSuite extends BaseSuite:
 
   // Send a raw HTTP request to /graphql and return (status-code, parsed JSON body).
   private def rawRequest(query: String, method: Method): IO[(Status, Json)] =
-    JdkHttpClient.simple[IO].use { client =>
-      val svr     = serverFixture()
-      val baseUri = svr.baseUri / "graphql"
-      val req = method match {
-        case Method.POST =>
-          Request[IO](Method.POST, baseUri)
-            .withEntity(Json.obj("query" -> Json.fromString(query)))
-        case _ =>
-          Request[IO](method, baseUri.withQueryParam("query", query))
-      }
-      client.run(req).use(resp => resp.as[Json].map(body => (resp.status, body)))
+    val baseUri = serverFixture().baseUri / "graphql"
+    val req = method match {
+      case Method.POST =>
+        Request[IO](Method.POST, baseUri)
+          .withEntity(Json.obj("query" -> Json.fromString(query)))
+      case _ =>
+        Request[IO](method, baseUri.withQueryParam("query", query))
     }
+    httpClientFixture().run(req).use(resp => resp.as[Json].map(body => (resp.status, body)))
 
   // Assert that the response is 422 Unprocessable Content with a well-formed GraphQL JSON body
   // whose first error message names subscriptions as the problem.

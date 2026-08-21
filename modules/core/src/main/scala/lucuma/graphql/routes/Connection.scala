@@ -95,7 +95,7 @@ object Connection {
         subs: Subscriptions[F],
       ): (ConnectionState[F], F[Unit]) =
         (connected(service, send, subs),
-         send(ConnectionAck().asRight.some) *> send(Ping().asRight.some)
+         send(ConnectionAck().asRight.some) *> send(FromServer.Ping().asRight.some)
         )
 
 
@@ -133,7 +133,7 @@ object Connection {
         (connected(service, r, s),
           subscriptions.removeAll  *>
             r(ConnectionAck().asRight.some) *>
-            r(Ping().asRight.some)
+            r(FromServer.Ping().asRight.some)
         )
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
@@ -290,7 +290,8 @@ object Connection {
               case ConnectionInit(m)       => init(m)
               case Subscribe(id, request)  => handle(_.start(id, request))
               case FromClient.Complete(id) => handle(_.stop(id))
-              case Pong(_)                 => debug"Received Pong from client"
+              case FromClient.Ping(_)      => replyQueue.offer(FromServer.Pong().asRight.some)
+              case FromClient.Pong(_)      => debug"Received Pong from client"
             }
           }
 
