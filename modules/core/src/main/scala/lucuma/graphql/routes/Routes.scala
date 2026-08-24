@@ -58,16 +58,20 @@ object Routes {
     val dsl = new Http4sDsl[F]{}
     import dsl._
 
-    given QueryParamDecoder[JsonObject] = QueryParamDecoder[String].emap { s =>
-      parser.parse(s) match {
-        case Left(ParsingFailure(msg, _)) => Left(ParseFailure("Invalid variables", msg))
-        case Right(json) => json.asObject.toRight(ParseFailure("Expected JsonObject", json.spaces2))
+    // The specification encodes the `variables` and the `extensions` parameters of a GET request
+    // as a JSON object in a string.
+    def jsonObjectDecoder(name: String): QueryParamDecoder[JsonObject] =
+      QueryParamDecoder[String].emap { s =>
+        parser.parse(s) match {
+          case Left(ParsingFailure(msg, _)) => ParseFailure(s"The `$name` parameter is not valid JSON", msg).asLeft
+          case Right(json) => json.asObject.toRight(ParseFailure(s"The `$name` parameter is not a JSON object", json.spaces2))
+        }
       }
-    }
 
     object QueryMatcher         extends QueryParamDecoderMatcher[String]("query")
     object OperationNameMatcher extends OptionalQueryParamDecoderMatcher[String]("operationName")
-    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("variables")
+    object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("variables")(using jsonObjectDecoder("variables"))
+    object ExtensionsMatcher    extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("extensions")(using jsonObjectDecoder("extensions"))
 
     // Select the media type of the response. The specification requires status 406 when the
     // server supports no media type that the client accepts.
@@ -95,10 +99,10 @@ object Routes {
     HttpRoutes.of[F] {
 
       // GraphQL query is embedded in the URI query string when queried via GET
-      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) =>
+      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) +& ExtensionsMatcher(exts) =>
         T.span(s"GET /$graphQLPath").surround:
-          debug"GET one off: query=$query, op=$op, vars=$vars" *>
-          withHandler(req)(_.oneOffGet(query, op, vars))
+          debug"GET one off: query=$query, op=$op, vars=$vars, exts=$exts" *>
+          withHandler(req)(_.oneOffGet(query, op, vars, exts))
 
       // A GET request without a `query` parameter is not a well-formed GraphQL-over-HTTP request.
       // The specification asks for status 422.
@@ -226,21 +230,23 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
   def oneOffGet(
     query: String,
     op:    Option[String],
-    vars0: Option[ValidatedNel[ParseFailure, JsonObject]]
+    vars0: Option[ValidatedNel[ParseFailure, JsonObject]],
+    exts0: Option[ValidatedNel[ParseFailure, JsonObject]]
   ): F[Response[F]] =
-    vars0.sequence.fold(
-      // A `variables` parameter that is not a JSON object is not a well-formed GraphQL-over-HTTP
-      // request. The specification asks for status 422.
+    (vars0.sequence, exts0.sequence).tupled.fold(
+      // A `variables` or `extensions` parameter that is not a JSON object is not a well-formed
+      // GraphQL-over-HTTP request. The specification asks for status 422. The response reports
+      // the errors of both parameters.
       errors => errorResponse(UnprocessableContent, errors.map(_.sanitized)),
-      // GET carries no extensions, so no remote trace context to join.
-      vars => {
+      (vars, exts) => {
         val parsed = service.parse(query, op, vars)
         rejectSubscription(parsed) {
           parsed match {
             // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
             case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
             case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
-            case _ => execute(parsed, query)(service.query(_, query, op))
+            // Re-parent server spans on the remote context in `extensions`, as POST does.
+            case _ => execute(parsed, query)(p => joinRemote(exts.traceCarrier)(service.query(p, query, op)))
           }
         }
       }
