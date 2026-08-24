@@ -1,3 +1,4 @@
+val catsEffectVersion          = "3.7.0"
 val circeVersion               = "0.14.16"
 val clueVersion                = "0.58.0"
 val fs2Version                 = "3.12.0"
@@ -40,6 +41,7 @@ lazy val core = project
       "org.http4s"    %% "http4s-ember-server"         % http4sVersion              % Test,
       "org.http4s"    %% "http4s-jdk-http-client"      % http4sJdkHttpClientVersion % Test,
       "org.scalameta" %% "munit"                       % munitVersion               % Test,
+      "org.typelevel" %% "cats-effect-testkit"         % catsEffectVersion          % Test,
       "org.typelevel" %% "grackle-circe"               % grackleVersion             % Test,
       "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
       "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
