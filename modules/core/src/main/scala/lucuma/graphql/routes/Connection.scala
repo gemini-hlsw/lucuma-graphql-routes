@@ -243,10 +243,7 @@ object Connection {
           // Creates the function used to send replies to the client. It just offers a message to
           // the reply queue and logs it.
           val reply: Option[Either[GraphQLWSError, FromServer]] => F[Unit] = { m =>
-            for {
-              b <- replyQueue.tryOffer(m)
-              _ <- debug"Subscriptions send $m ${if (b) "enqueued" else "DROPPED!"}"
-            } yield ()
+            replyQueue.offer(m) *> debug"Subscriptions send $m enqueued"
           }
 
           // Given an optional Authorization, get a service and start a subscription (if allowed)
