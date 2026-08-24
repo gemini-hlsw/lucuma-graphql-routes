@@ -99,6 +99,14 @@ abstract class BaseSuite extends CatsEffectSuite:
       _  <- Resource.make(sc.connect(ps.pure[IO]))(_ => sc.disconnect())
     yield sc
 
+  // Send a request to the /graphql endpoint without any client-side interpretation, and return
+  // the status, the headers and the body text of the response. Use this to assert on the parts
+  // of the response that a GraphQL client hides, such as the status code and the media type.
+  protected def rawResponse(mkRequest: Http4sUri => Request[IO]): IO[(Status, Headers, String)] =
+    Resource.eval(IO(serverFixture()))
+      .flatMap(svr => JdkHttpClient.simple[IO].flatMap(_.run(mkRequest(svr.baseUri / "graphql"))))
+      .use(resp => resp.bodyText.compile.string.map((resp.status, resp.headers, _)))
+
   protected lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)
 
