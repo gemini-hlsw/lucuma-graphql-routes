@@ -262,22 +262,35 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       case Right(body)   => postBody(body)
     }
 
+  // Reads an optional request parameter of the body. The specification gives a type to each
+  // parameter, and a parameter with the value `null` counts as absent. A parameter of the wrong
+  // type makes the request not well-formed.
+  private def optionalParam[A](
+    obj:  JsonObject,
+    name: String,
+    tpe:  String
+  )(read: Json => Option[A]): Either[NonEmptyList[String], Option[A]] =
+    obj(name).filterNot(_.isNull) match {
+      case None       => none.asRight
+      case Some(json) => read(json).map(_.some).toRight(NonEmptyList.one(s"The `$name` entry must be $tpe."))
+    }
+
   private def postBody(body: Json): F[Response[F]] = {
 
     // A body that is not a JSON object, or that has no `query` entry of type string, is not a
     // well-formed GraphQL-over-HTTP request. The specification asks for status 422.
-    val request: Either[String, (JsonObject, String)] =
-      for {
-        obj   <- body.asObject.toRight("The request body must be a JSON object.")
-        query <- obj("query").flatMap(_.asString).toRight("The request body must have a `query` entry of type string.")
-      } yield (obj, query)
+    val request = body.asObject.toRight(NonEmptyList.one("The request body must be a JSON object.")).flatMap(obj =>
+      (
+        obj("query").flatMap(_.asString).toRight(NonEmptyList.one("The request body must have a `query` entry of type string.")),
+        optionalParam(obj, "operationName", "a string")(_.asString),
+        optionalParam(obj, "variables", "a JSON object")(_.asObject),
+        optionalParam(obj, "extensions", "a JSON object")(_.asObject)
+      ).parTupled
+    )
 
     request.fold(
-      message => errorResponse(UnprocessableContent, message),
-      (obj, query) => {
-        val op     = obj("operationName").flatMap(_.asString)
-        val vars   = obj("variables").flatMap(_.asObject)
-        val ext    = obj("extensions").flatMap(_.asObject)
+      messages => errorResponse(UnprocessableContent, messages),
+      (query, op, vars, ext) => {
         val parsed = service.parse(query, op, vars)
         rejectSubscription(parsed) {
           execute(parsed, query)(p => joinRemote(ext.traceCarrier)(service.query(p, query, op)))
