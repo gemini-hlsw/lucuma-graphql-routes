@@ -76,14 +76,7 @@ object Routes {
     // Select the media type of the response. The specification requires status 406 when the
     // server supports no media type that the client accepts.
     def negotiated(req: Request[F])(use: ResponseMediaType => F[Response[F]]): F[Response[F]] =
-      ResponseMediaType.negotiate(req.headers) match
-        case None    =>
-          // The client accepts no media type that can carry a GraphQL response, so this response
-          // carries plain text. The specification forbids the GraphQL media type here.
-          NotAcceptable(
-            s"This server supports the media types ${ResponseMediaType.GraphQLResponseJson} and ${ResponseMediaType.Json}."
-          )
-        case Some(t) => use(t)
+      ResponseMediaType.negotiateOrError(req.headers).fold(NotAcceptable(_), use)
 
     // Select the response media type, then build a handler for the authorized service.
     def withHandler(req: Request[F])(use: HttpRouteHandler[F] => F[Response[F]]): F[Response[F]] =
