@@ -74,9 +74,10 @@ class ResponseMediaTypeSuite extends BaseSuite:
     post("*/*".some).map: (_, contentType) =>
       assert(contentType.exists(_.startsWith(GraphQLJson)), s"Got: $contentType")
 
-  test("an absent Accept header gives the GraphQL media type"):
-    post(none).map: (_, contentType) =>
-      assert(contentType.exists(_.startsWith(GraphQLJson)), s"Got: $contentType")
+  test("an absent Accept header gives the legacy media type"):
+    post(none).map: (status, contentType) =>
+      assertEquals(status, Status.Ok)
+      assert(contentType.exists(_.startsWith(LegacyJson)), s"Got: $contentType")
 
   test("the response declares the utf-8 charset"):
     post(GraphQLJson.some).map: (_, contentType) =>
@@ -91,6 +92,14 @@ class ResponseMediaTypeSuite extends BaseSuite:
   test("a 406 response does not use the GraphQL media type"):
     post("text/html".some).map: (_, contentType) =>
       assert(!contentType.exists(_.contains("graphql-response+json")), s"Got: $contentType")
+
+  test("a 406 response carries the message of the negotiation"):
+    rawResponse: uri =>
+      Request[IO](Method.POST, uri)
+        .withEntity(Json.obj("query" -> Json.fromString("query { ping }")))
+        .putHeaders(Header.Raw(ci"Accept", "text/html"))
+    .map: (_, _, body) =>
+      assertEquals(body, s"Unsupported 'Accept' header 'text/html'. Supported media types are '$GraphQLJson' and '$LegacyJson'.")
 
   // A q value of 0 means that the client refuses the media type.
   test("a q value of 0 for every supported media type gives 406"):

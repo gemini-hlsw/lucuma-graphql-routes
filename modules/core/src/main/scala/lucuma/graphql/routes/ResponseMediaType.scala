@@ -88,18 +88,20 @@ object ResponseMediaType:
       .fromInt(294)
       .getOrElse(throw new AssertionError("294 Partial Success is a valid status code"))
 
-  /**
-   * Select the media type for a response to a request with the given headers.
-   *
-   * The specification leaves the choice to the server when the request has no `Accept` header.
-   * This server then uses the GraphQL media type.
-   *
-   * A result of `None` means that the server supports no media type that the client accepts. The
-   * caller must then answer with status 406.
-   */
+  @deprecated("Use negotiateOrError, which carries the error message of a 406 response.", "0.14.1")
   def negotiate(headers: Headers): Option[ResponseMediaType] =
+    negotiateOrError(headers).toOption
+
+  /**
+   * Select the media type of a response from the `Accept` header of the request.
+   *
+   * A request without an `Accept` header comes from a legacy client.
+   *
+   * A result of `Left` carries an error message for a 406 response.
+   */
+  def negotiateOrError(headers: Headers): Either[String, ResponseMediaType] =
     headers.get[Accept] match
-      case None         => GraphQL.some
+      case None         => LegacyJson.asRight
       case Some(accept) =>
         // Extract the highest q value of that media type
         def priority(mediaType: MediaType): Option[QValue] =
@@ -109,7 +111,9 @@ object ResponseMediaType:
             .maximumOption
 
         (priority(GraphQLResponseJson), priority(Json)) match
-          case (Some(graphQL), Some(json)) => (if json > graphQL then LegacyJson else GraphQL).some
-          case (Some(_), None)             => GraphQL.some
-          case (None, Some(_))             => LegacyJson.some
-          case (None, None)                => none
+          case (Some(graphQL), Some(json)) => (if json > graphQL then LegacyJson else GraphQL).asRight
+          case (Some(_), None)             => GraphQL.asRight
+          case (None, Some(_))             => LegacyJson.asRight
+          case (None, None)                =>
+            val accepted = Accept.headerInstance.value(accept)
+            s"Unsupported 'Accept' header '$accepted'. Supported media types are '${GraphQLResponseJson.show}' and '${Json.show}'.".asLeft

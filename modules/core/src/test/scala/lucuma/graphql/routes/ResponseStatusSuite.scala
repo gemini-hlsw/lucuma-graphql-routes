@@ -42,16 +42,20 @@ class ResponseStatusSuite extends BaseSuite:
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
     GraphQLService(ResponseStatusMapping).some.pure[IO]
 
+  // A request without an `Accept` header counts as a legacy client, which never gets status 294.
+  // These tests are about the status of a modern client, so they ask for the GraphQL media type.
+  private val AcceptGraphQL = Header.Raw(ci"Accept", "application/graphql-response+json")
+
   private def post(query: String, operationName: Option[String] = None): IO[(Status, Json)] =
     rawResponse: uri =>
       val fields = List("query" -> Json.fromString(query)) ++
         operationName.map(n => "operationName" -> Json.fromString(n))
-      Request[IO](Method.POST, uri).withEntity(Json.fromFields(fields))
+      Request[IO](Method.POST, uri).withEntity(Json.fromFields(fields)).putHeaders(AcceptGraphQL)
     .map((status, _, body) => (status, parser.parse(body).getOrElse(Json.Null)))
 
   private def get(query: String): IO[(Status, Json)] =
     rawResponse: uri =>
-      Request[IO](Method.GET, uri.withQueryParam("query", query))
+      Request[IO](Method.GET, uri.withQueryParam("query", query)).putHeaders(AcceptGraphQL)
     .map((status, _, body) => (status, parser.parse(body).getOrElse(Json.Null)))
 
   private def hasErrors(body: Json): Boolean =
@@ -106,6 +110,16 @@ class ResponseStatusSuite extends BaseSuite:
       assertEquals(status, Status.Ok)
       assert(hasData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
+      val contentType = headers.get(ci"Content-Type").map(_.head.value)
+      assert(contentType.exists(_.startsWith("application/json")), s"Got: $contentType")
+
+  test("a request without an Accept header gets 200 for a response with data and errors"):
+    rawResponse: uri =>
+      Request[IO](Method.POST, uri)
+        .withEntity(Json.obj("query" -> Json.fromString("query { nullableFail }")))
+    .map: (status, headers, text) =>
+      assertEquals(status, Status.Ok)
+      assert(hasErrors(parser.parse(text).getOrElse(Json.Null)))
       val contentType = headers.get(ci"Content-Type").map(_.head.value)
       assert(contentType.exists(_.startsWith("application/json")), s"Got: $contentType")
 
