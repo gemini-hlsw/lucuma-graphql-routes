@@ -73,10 +73,21 @@ object Routes {
     object VariablesMatcher     extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("variables")(using jsonObjectDecoder("variables"))
     object ExtensionsMatcher    extends OptionalValidatingQueryParamDecoderMatcher[JsonObject]("extensions")(using jsonObjectDecoder("extensions"))
 
+    // The specification requires a well-formed GraphQL response body for the GraphQL media type at
+    // every status. An unexpected error gives status 500 with a generic message and no data. The
+    // cause goes to the log, not to the client.
+    def internalErrorResponse(t: ResponseMediaType)(err: Throwable): F[Response[F]] =
+      Logger[F].error(err)("Internal error in GraphQL request handling.") *>
+        t.errorResponse[F](InternalServerError, "Internal server error.").pure[F]
+
     // Select the media type of the response. The specification requires status 406 when the
-    // server supports no media type that the client accepts.
+    // server supports no media type that the client accepts. This is the error boundary of every
+    // HTTP GraphQL route, because it is the first point that knows the media type of the response.
     def negotiated(req: Request[F])(use: ResponseMediaType => F[Response[F]]): F[Response[F]] =
-      ResponseMediaType.negotiateOrError(req.headers).fold(NotAcceptable(_), use)
+      ResponseMediaType.negotiateOrError(req.headers).fold(
+        NotAcceptable(_),
+        t => use(t).handleErrorWith(internalErrorResponse(t))
+      )
 
     // Select the response media type, then build a handler for the authorized service.
     def withHandler(req: Request[F])(use: HttpRouteHandler[F] => F[Response[F]]): F[Response[F]] =
@@ -163,8 +174,9 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       case _                    => failureStatus
     }
 
-  // Builds the response for a result. `mkResponse` raises the error of an internal error, which
-  // http4s turns into status 500.
+  // Builds the response for a result. `mkResponse` raises the error of an internal error. The
+  // route boundary in `Routes.forService` turns that error into status 500 with a GraphQL error
+  // body.
   def toResponse(result: Result[Json], failureStatus: Status = UnprocessableContent): F[Response[F]] =
     service.mapping.mkResponse(result).flatMap(respond(statusFor(result, failureStatus), _))
 
@@ -198,15 +210,25 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       "Mutation operations are not supported on a GET request. Use a POST request."
     ).map(_.putHeaders(Allow(Method.POST)))
 
+  // The specification treats an error that execution raises as a field error. The response to a
+  // field error must have a `data` entry and a 2xx status. A bare failure carries no value, so
+  // this handler gives it the value `null` and lets `toResponse` select the 2xx status.
+  private def executionResponse(result: Result[Json]): F[Response[F]] =
+    toResponse(result match {
+      case Result.Failure(problems) => Result.Warning(problems, Json.Null)
+      case other                    => other
+    })
+
   // Runs the operation and builds the response. A failure of the parse stage carries no
-  // operation, so its status comes from the document instead of from the execution stage.
+  // operation, so its status comes from the document. A failure of the execution stage is a
+  // field error, which gives a 2xx status with a null `data` entry.
   private def execute(
     parsed:   Result[Operation],
     document: String
   )(run: Operation => F[Result[Json]]): F[Response[F]] =
     parsed match {
       case f: Result.Failure => toResponse(f, parseFailureStatus(document))
-      case _                 => parsed.flatTraverse(run).flatMap(toResponse(_))
+      case _                 => parsed.flatTraverse(run).flatMap(executionResponse)
     }
 
   // If the parsed operation is a subscription, return a 422 rejection immediately.
