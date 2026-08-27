@@ -3,19 +3,19 @@
 
 package lucuma.graphql.routes
 
-import cats.Monad
+import cats.FlatMap
 import cats.effect.Concurrent
 import cats.effect.Deferred
 import cats.effect.Fiber
-import cats.effect.Outcome
 import cats.effect.Ref
-import cats.effect.syntax.all.*
+import cats.effect.Resource.ExitCase
+import cats.effect.implicits.*
+import cats.effect.std.Supervisor
 import cats.implicits.*
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromServer.*
 import fs2.Pipe
 import fs2.Stream
-import fs2.concurrent.SignallingRef
 import grackle.Result
 import io.circe.Json
 import org.typelevel.log4cats.Logger
@@ -25,14 +25,20 @@ trait Subscriptions[F[_]] {
 
   /**
    * Adds a new subscription receiving events from the provided `Stream`.
-   * @param id     client-provided id for the subscription
-   * @param events stream of Either errors or Json results that match the subscription query
+   * @param id
+   *   client-provided id for the subscription
+   * @param events
+   *   stream of Either errors or Json results that match the subscription query
+   * @return
+   *   true if the event stream started, false if the id is already in use. The caller decides what
+   *   a duplicate id means for the connection.
    */
-  def add(id: String, events: Stream[F, Result[Json]]): F[Unit]
+  def add(id: String, events: Stream[F, Result[Json]]): F[Boolean]
 
   /**
    * Removes a subscription so that it no longer provides events to the client.
-   * @param id client-provided id
+   * @param id
+   *   client-provided id
    */
   def remove(id: String): F[Unit]
 
@@ -45,90 +51,113 @@ object Subscriptions {
 
   /**
    * Tracks a single client subscription.
-   * @param results Underlying stream of results, each of which is an Either error or subscription
-   *  query match
-   * @param stopped Set to true to interrupt the stream. Also identifies the subscription.
+   * @param fiber
+   *   Holds the fiber of the event stream once the map entry for the subscription exists. The event
+   *   stream waits for it, so the stream cannot end before the entry that its finalizer must clean
+   *   up exists.
+   * @param errorSent
+   *   True once an `error` message went to the client for this id.
    */
-  private final class Subscription[F[_]: Monad](
-    val results: Deferred[F, Fiber[F, Throwable, Unit]],
-    val stopped: SignallingRef[F, Boolean]
+  private final class Subscription[F[_]: FlatMap](
+    val fiber:     Deferred[F, Fiber[F, Throwable, Unit]],
+    val errorSent: Ref[F, Boolean]
   ) {
-
-    val stop: F[Unit] =
-      for {
-        _ <- stopped.set(true)
-        f <- results.get
-        _ <- f.cancel
-      } yield ()
-
+    val stop: F[Unit] = fiber.get.flatMap(_.cancel)
   }
 
   def apply[F[_]: Logger: Concurrent](
-    send: Option[FromServer] => F[Unit]
+    supervisor: Supervisor[F],
+    send:       FromServer => F[Unit]
   ): F[Subscriptions[F]] =
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
+        // The caller that takes an entry out of the map owns the `Complete` for that id, unless
+        // an `error` message already went to the client.
+        private def stopAndComplete(id: String, s: Subscription[F]): F[Unit] =
+          (s.stop *> s.errorSent.get.flatMap(err => send(Complete(id)).unlessA(err)))
+            .handleErrorWith(t => Logger[F].warn(t)(s"could not remove subscription $id"))
 
-        // The caller that takes an entry out of the map owns the `Complete` for that id.
-        def stopAndComplete(id: String, s: Subscription[F]): F[Unit] =
-          s.stop *> send(Some(Complete(id)))
+        /**
+         * Inserts a new subscription and starts its event stream. If the id is already in use, the
+         * stream does not start and the map does not change.
+         */
+        private def insertAndStart(
+          id:    String,
+          entry: Subscription[F],
+          run:   F[Unit]
+        ): F[Boolean] =
+          subscriptions.flatModify: m =>
+            if (m.contains(id))
+              (
+                m,
+                Logger[F].debug(s"duplicate subscription id $id").as(false)
+              )
+            else
+              (m.updated(id, entry),
+               for
+                 _     <- Logger[F].debug(s"starting event stream $id")
+                 fiber <- supervisor.supervise(run)
+                 _     <- entry.fiber.complete(fiber)
+                 _     <- Logger[F].debug(s"started event stream $id")
+               yield true
+              )
 
         // `errorSent` records that an `error` message went to the client for this id. The
-        // protocol makes `error` a terminal message, so no `complete` can follow it.
-        def replySink(id: String, errorSent: Ref[F, Boolean]): Pipe[F, Result[Json], Unit] =
-          _.evalMap { r =>
-            for {
-              e <- mkFromServer(r, id)
-              _ <- errorSent.set(true).whenA(e.isLeft)
-              _ <- send(Some(e.merge))
-            } yield ()
-          }
+        // protocol makes `error` a terminal message, so the stream ends after the first `error`
+        // and no `complete` can follow it. The send, the flag and the removal from the map form
+        // one uncancelable step. The client can reuse the id as soon as it has the `error`
+        // message, so the entry must not outlive that message.
+        private def replySink(
+          id:        String,
+          errorSent: Ref[F, Boolean],
+          removeOwn: F[Boolean]
+        ): Pipe[F, Result[Json], Unit] =
+          _.evalMap(mkFromServer(_, id))
+            .takeThrough(_.isRight)
+            .evalMap {
+              case Left(e)  => (send(e) *> errorSent.set(true) *> removeOwn.void).uncancelable
+              case Right(n) => send(n)
+            }
 
-        override def add(id: String, events: Stream[F, Result[Json]]): F[Unit] =
+        override def add(id: String, events: Stream[F, Result[Json]]): F[Boolean] =
           (for {
-            r         <- SignallingRef(false)
-            errorSent <- Ref[F].of(false)
-            in         = r.discrete.evalTap(v => Logger[F].debug(s"signalling ref = $v"))
-            removeOwn  = subscriptions.modify: m =>
-                            if (m.get(id).exists(_.stopped eq r)) (m.removed(id), true)
-                            else (m, false)
-            complete   = for
-                           own <- removeOwn
-                           err <- errorSent.get
-                           _   <- send(Complete(id).some).whenA(own && !err)
-                         yield ()
-            // A failure of the source stream is reported to the client as a terminal `error`
-            // message. No `complete` follows it.
-            error      = (t: Throwable) =>
-                           for
-                             own <- removeOwn
-                             err <- errorSent.get
-                             _   <- send(Error(id, mkGraphqlErrors(t)).some).whenA(own && !err)
-                           yield ()
-            es         = events.through(replySink(id, errorSent)).interruptWhen(in)
-            fiber     <- Deferred[F, Fiber[F, Throwable, Unit]]
-            _         <- subscriptions.update(_.updated(id, new Subscription(fiber, r)))
-            _         <- Logger[F].debug(s"starting event stream $id")
-            f         <- es.compile.drain
-                           .guaranteeCase:
-                             case Outcome.Succeeded(_) => complete
-                             case Outcome.Errored(t)   => error(t)
-                             case Outcome.Canceled()   => removeOwn.void
-                           .start
-            _         <- fiber.complete(f)
-            _         <- Logger[F].debug(s"started event stream $id")
-          } yield ()).uncancelable // cancellation before fiber.complete would block every stop
+            errorSent   <- Ref[F].of(false)
+            fiberD      <- Deferred[F, Fiber[F, Throwable, Unit]]
+            entry        = new Subscription(fiberD, errorSent)
+            removeOwn    = subscriptions.modify: m =>
+                             if (m.get(id).exists(_ eq entry)) (m.removed(id), true)
+                             else (m, false)
+            // The terminal message for this id, unless another caller took the entry out of
+            // the map or a terminal `error` message already went to the client.
+            sendLast     = (m: FromServer) =>
+                             for
+                               own <- removeOwn
+                               err <- errorSent.get
+                               _   <- send(m).whenA(own && !err)
+                             yield ()
+            // The stream waits for its own fiber, so it cannot end before its map entry
+            // exists. A natural end sends `complete` and a failure sends a terminal `error`.
+            // Cancellation sends nothing, because the canceller owns the `complete` for the id.
+            subscription = (Stream.exec(fiberD.get.void) ++
+                             events.through(replySink(id, errorSent, removeOwn)))
+                             .onFinalizeCase {
+                               case ExitCase.Succeeded  => sendLast(Complete(id))
+                               case ExitCase.Errored(t) => sendLast(Error(id, mkGraphqlErrors(t)))
+                               case ExitCase.Canceled   => removeOwn.void
+                             }
+                             .compile
+                             .drain
+            result      <- insertAndStart(id, entry, subscription)
+          } yield result).uncancelable
 
         override def remove(id: String): F[Unit] =
-          subscriptions
-            .getAndUpdate(_.removed(id))
-            .flatMap(_.get(id).traverse_(stopAndComplete(id, _)))
+          subscriptions.flatModifyFull: (poll, s) =>
+            (s.removed(id), s.get(id).traverse_(sub => poll(stopAndComplete(id, sub))))
 
         override def removeAll: F[Unit] =
-          subscriptions
-            .getAndSet(Map.empty[String, Subscription[F]])
-            .flatMap(_.toList.traverse_((id, s) => stopAndComplete(id, s)))
+          subscriptions.flatModifyFull: (poll, s) =>
+            (Map.empty, poll(s.toList.parTraverse_(stopAndComplete(_, _))))
 
       }
     }

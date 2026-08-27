@@ -1,3 +1,5 @@
+import com.typesafe.tools.mima.core.*
+
 val catsEffectVersion          = "3.7.1"
 val circeVersion               = "0.14.16"
 val clueVersion                = "0.58.0"
@@ -45,5 +47,14 @@ lazy val core = project
       "org.typelevel" %% "grackle-circe"               % grackleVersion             % Test,
       "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
       "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
-    )
+    ),
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.Connection.*"),
+      ProblemFilters.exclude[IncompatibleMethTypeProblem]("lucuma.graphql.routes.Connection.*"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.Subscriptions.*"),
+      ProblemFilters.exclude[IncompatibleMethTypeProblem]("lucuma.graphql.routes.Subscriptions#Subscription.*"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.Subscriptions#Subscription.*"),
+      ProblemFilters.exclude[MissingClassProblem]("lucuma.graphql.routes.package"),
+      ProblemFilters.exclude[MissingClassProblem]("lucuma.graphql.routes.package$")
+    ),
   )

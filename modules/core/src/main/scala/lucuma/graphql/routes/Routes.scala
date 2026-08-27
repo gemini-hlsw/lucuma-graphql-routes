@@ -11,6 +11,7 @@ import cats.implicits.*
 import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import clue.model.json.given
+import fs2.Pipe
 import fs2.Stream
 import grackle.Operation
 import grackle.Result
@@ -300,75 +301,104 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
 
 }
 
+object WsRouteHandler {
+
+  // The connection_init message payload has authorization information
+  // which should not be logged.
+  private val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
+  private val RedactedAuth = """$1 <REDACTED>"""
+
+  /** Replaces the value of the `Authorization` property of a client message with a marker. */
+  private def redactAuth(s: String): String =
+    AuthRegEx.replaceFirstIn(s, RedactedAuth)
+
+}
+
 class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
+  import WsRouteHandler.redactAuth
 
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
   def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = T.span("graphql.routes.webSocketConnection").surround {
 
-    val keepAliveStream: Stream[F, FromServer] =
+    // The keepalive Ping is a constant, so it is encoded once for the lifetime of the handler.
+    val pingFrame: WebSocketFrame =
+      Text(FromServer.Ping().asJson.noSpaces)
+
+    val keepAliveStream: Stream[F, Reply] =
       Stream
-        .constant[F, FromServer](FromServer.Ping())
+        .constant[F, Reply](Reply.Send(FromServer.Ping()))
         .metered(KeepAliveDuration)
 
-    def logFromServer(msg: Either[GraphQLWSError, FromServer]): F[Unit] =
-      msg match {
-        case Left(err)                 => warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
-        case Right(FromServer.Ping(_)) => debug"Sending Ping"
-        case Right(msg)                => debug"Sending to client: ${trimmedMessage(msg)}"
-      }
-
-    def logWebSocketFrame(f: WebSocketFrame): F[Unit] = {
-
-      // The connection_init message payload has authorization information
-      // which should not be logged.
-      val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
-      val RedactedAuth = """$1 <REDACTED>"""
-
+    def logWebSocketFrame(f: WebSocketFrame): F[Unit] =
       f match {
-        case Text(s, last) => debug"Received Text frame (last=$last) from client: ${AuthRegEx.replaceFirstIn(s, RedactedAuth)}"
+        case Text(s, last) => debug"Received Text frame (last=$last) from client: ${redactAuth(s)}"
         case _             => debug"Received message from client: $f"
       }
-    }
 
-    def trimmedMessage(m: FromServer): String = {
-      val s = m.asJson.spaces2
+    def trimmed(s: String): String =
       if (s.length > 516) s"${s.take(512)} ..." else s
-    }
 
-    for {
-      replyQueue <- Queue.unbounded[F, Option[Either[GraphQLWSError, FromServer]]]
-      connection <- Connection(service, replyQueue)
-      response   <- wsb.withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws"))).build(
+    // The frame for a reply, and the log line that goes with it. The message is encoded once.
+    // `CloseWith` carries a code that the protocol reserves, so the close frame is well-formed.
+    // A code that http4s rejects produces no frame, and the end of the reply stream still closes
+    // the socket.
+    val toFrames: Pipe[F, Reply, WebSocketFrame] =
+      _.evalMapFilter[F, WebSocketFrame] {
+        case Reply.Send(FromServer.Ping(None)) =>
+          debug"Sending Ping".as(pingFrame.some)
+        case Reply.Send(m)                     =>
+          val s = m.asJson.noSpaces
+          debug"Sending to client: ${trimmed(s)}".as(Text(s).some)
+        case Reply.CloseWith(err)              =>
+          warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
+            .as(Close(err.code, err.reason).orElse(Close(err.code)).toOption)
+        case Reply.End                         =>
+          debug"Ending the reply stream - Closing connection".as(none)
+      }
 
-          // Replies to client
-          Stream
-            .fromQueueNoneTerminated(replyQueue)
-            .mergeHaltL(keepAliveStream.map(_.asRight))
-            .evalTap(logFromServer)
-            .map{
-              case Left(err) => Close(err.code, err.reason).orElse(Close(err.code)).toOption.get
-              case Right(m)  => Text(m.asJson.spaces2)
-            },
+    // Replies to the client. A terminal reply ends the stream, so `mergeHaltL` then stops the
+    // keepalive stream, and no Ping follows the close frame.
+    def replies(replyQueue: Queue[F, Reply]): Stream[F, WebSocketFrame] =
+      Stream
+        .fromQueueUnterminated(replyQueue)
+        .takeThrough(!_.isTerminal)
+        .through(toFrames)
+        .mergeHaltL(keepAliveStream.through(toFrames))
 
-          // Input from client
-          _.evalTap(logWebSocketFrame)
-            .evalMap {
-              case Text(s, _) =>
-                scala.util.Try(parser.decode[FromClient](s)).toEither.flatten.fold(
-                  e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
-                  m => connection.receive(m)
-                )
+    // Input from the client. A frame that the server cannot handle fails the stream.
+    def receive(connection: Connection[F]): Pipe[F, WebSocketFrame, Nothing] =
+      _.evalTap(logWebSocketFrame)
+        .evalMap {
+          case Text(s, _) =>
+            Either.catchNonFatal(parser.decode[FromClient](s)).flatten.fold(
+              e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+              m => connection.receive(m)
+            )
 
-              case Close(_)   =>
-                connection.close
+          case Close(_)   =>
+            connection.close
 
-              case f          =>
-                Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
-            }
-        )
-    } yield response
+          case f          =>
+            Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+        }
+        .drain
+
+    // The reply queue and the connection live inside the stream, so fs2 owns their lifetime. A
+    // build that never opens a socket leaks nothing, because the stream never runs.
+    // `mergeHaltBoth` ends the socket when either side ends, which closes the connection and
+    // cancels every subscription. An abrupt disconnect takes the same path.
+    val sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame] = in =>
+      for {
+        replyQueue <- Stream.eval(Queue.unbounded[F, Reply])
+        connection <- Stream.resource(Connection(service, replyQueue))
+        frame      <- replies(replyQueue).mergeHaltBoth(in.through(receive(connection)))
+      } yield frame
+
+    wsb
+      .withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws")))
+      .build(sendReceive)
   }
 
 }

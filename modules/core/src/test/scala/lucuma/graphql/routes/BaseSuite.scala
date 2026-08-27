@@ -4,6 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.effect.*
+import cats.effect.std.Queue
 import cats.effect.std.Supervisor
 import cats.effect.unsafe.IORuntime
 import cats.effect.unsafe.IORuntimeConfig
@@ -57,6 +58,16 @@ object BaseSuite:
     case e => print("OdbSuite.reportFailure: "); e.printStackTrace
 
   val logger: Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-odb-test")
+
+  // An in-process connection and its reply queue. There is no socket and no server, so a test
+  // can send client messages to the connection and read the replies straight off the queue.
+  def connectionResource(
+    service: Option[Authorization] => IO[Option[GraphQLService[IO]]]
+  )(using Logger[IO], Tracer[IO]): Resource[IO, (Connection[IO], Queue[IO, Reply])] =
+    for
+      queue <- Resource.eval(Queue.unbounded[IO, Reply])
+      conn  <- Connection[IO](service, queue)
+    yield (conn, queue)
 
   // a runtime that is constructed the same as global, but lets us see unhandled errors (above)
   val runtime: IORuntime =
