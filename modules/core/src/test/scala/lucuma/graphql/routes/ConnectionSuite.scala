@@ -34,20 +34,32 @@ abstract class ConnectionSuite extends CatsEffectSuite:
 
   protected def complete(id: String): FromClient = FromClient.Complete(id)
 
+  /** The service that the connection authorizes against. */
+  protected val testService: IO[Option[GraphQLService[IO]]] =
+    GraphQLService(TestMapping).some.pure[IO]
+
+  // Runs the script against a connection that received no `connection_init` message, then returns
+  // every reply that the connection made, after the given settle time. Use this to test the
+  // handshake itself. For everything else, use `repliesOf`.
+  protected def rawRepliesOf(
+    settle:  FiniteDuration,
+    service: IO[Option[GraphQLService[IO]]] = testService
+  )(script: Connection[IO] => IO[Unit]): IO[List[Reply]] =
+    TestControl.executeEmbed:
+      BaseSuite
+        .connectionResource(_ => service)
+        .use: (conn, queue) =>
+          script(conn) *>
+            IO.sleep(settle) *>
+            queue.tryTakeN(none)
+
   // Runs the script against an initialized connection on the virtual clock, then returns every
   // reply that the connection made, after the given settle time. A script can sleep between
   // messages, so a test can put a client message after the result of an operation.
   protected def repliesOf(
     settle: FiniteDuration
   )(script: Connection[IO] => IO[Unit]): IO[List[Reply]] =
-    TestControl.executeEmbed:
-      BaseSuite
-        .connectionResource(_ => GraphQLService(TestMapping).some.pure[IO])
-        .use: (conn, queue) =>
-          conn.receive(init) *>
-            script(conn) *>
-            IO.sleep(settle) *>
-            queue.tryTakeN(none)
+    rawRepliesOf(settle)(conn => conn.receive(init) *> script(conn))
 
   // Sends the messages to an initialized connection on the virtual clock, then returns every
   // reply that the connection made, after the given settle time.
