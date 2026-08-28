@@ -20,15 +20,16 @@ import grackle.Result
 import io.circe.Json
 import org.typelevel.log4cats.Logger
 
-/** A GraphQL subscription in effect type F. */
+/** The active GraphQL operations of a connection, in effect type F. */
 trait Subscriptions[F[_]] {
 
   /**
-   * Adds a new subscription receiving events from the provided `Stream`.
+   * Adds a new operation receiving events from the provided `Stream`. A query or mutation is a
+   * one-element stream.
    * @param id
-   *   client-provided id for the subscription
+   *   client-provided id for the operation
    * @param events
-   *   stream of Either errors or Json results that match the subscription query
+   *   stream of Either errors or Json results that the operation produces
    * @return
    *   true if the event stream started, false if the id is already in use. The caller decides what
    *   a duplicate id means for the connection.
@@ -36,13 +37,13 @@ trait Subscriptions[F[_]] {
   def add(id: String, events: Stream[F, Result[Json]]): F[Boolean]
 
   /**
-   * Removes a subscription so that it no longer provides events to the client.
+   * Removes an operation so that it no longer provides events to the client.
    * @param id
    *   client-provided id
    */
   def remove(id: String): F[Unit]
 
-  /** Removes all subscriptions. */
+  /** Removes all operations. */
   def removeAll: F[Unit]
 
 }
@@ -50,9 +51,9 @@ trait Subscriptions[F[_]] {
 object Subscriptions {
 
   /**
-   * Tracks a single client subscription.
+   * Tracks a single client operation.
    * @param fiber
-   *   Holds the fiber of the event stream once the map entry for the subscription exists. The event
+   *   Holds the fiber of the event stream once the map entry for the operation exists. The event
    *   stream waits for it, so the stream cannot end before the entry that its finalizer must clean
    *   up exists.
    * @param errorSent
@@ -72,14 +73,23 @@ object Subscriptions {
 
     Ref[F].of(Map.empty[String, Subscription[F]]).map { subscriptions =>
       new Subscriptions[F]() {
-        // The caller that takes an entry out of the map owns the `Complete` for that id, unless
-        // an `error` message already went to the client.
-        private def stopAndComplete(id: String, s: Subscription[F]): F[Unit] =
-          (s.stop *> s.errorSent.get.flatMap(err => send(Complete(id)).unlessA(err)))
-            .handleErrorWith(t => Logger[F].warn(t)(s"could not remove subscription $id"))
 
         /**
-         * Inserts a new subscription and starts its event stream. If the id is already in use, the
+         * Cancels the subscription without sending a terminal message to the client.
+         */
+        private def stopOnly(id: String, s: Subscription[F]): F[Unit] =
+          s.stop.handleErrorWith(t => Logger[F].warn(t)(s"could not remove operation $id"))
+
+        /**
+         * Cancels the subscription and sends a terminal message to the client, unless an `error`
+         * message already went to the client.
+         */
+        private def stopAndComplete(id: String, s: Subscription[F]): F[Unit] =
+          (s.stop *> s.errorSent.get.flatMap(err => send(Complete(id)).unlessA(err)))
+            .handleErrorWith(t => Logger[F].warn(t)(s"could not remove operation $id"))
+
+        /**
+         * Inserts a new operation and starts its event stream. If the id is already in use, the
          * stream does not start and the map does not change.
          */
         private def insertAndStart(
@@ -91,7 +101,7 @@ object Subscriptions {
             if (m.contains(id))
               (
                 m,
-                Logger[F].debug(s"duplicate subscription id $id").as(false)
+                Logger[F].debug(s"duplicate operation id $id").as(false)
               )
             else
               (m.updated(id, entry),
@@ -138,7 +148,7 @@ object Subscriptions {
                              yield ()
             // The stream waits for its own fiber, so it cannot end before its map entry
             // exists. A natural end sends `complete` and a failure sends a terminal `error`.
-            // Cancellation sends nothing, because the canceller owns the `complete` for the id.
+            // Cancellation sends nothing, because the canceller decides what the client gets.
             subscription = (Stream.exec(fiberD.get.void) ++
                              events.through(replySink(id, errorSent, removeOwn)))
                              .onFinalizeCase {
@@ -151,9 +161,13 @@ object Subscriptions {
             result      <- insertAndStart(id, entry, subscription)
           } yield result).uncancelable
 
+        // A client `complete` message ends the operation. The client already stopped listening,
+        // so the server must not send a `complete` back for that id. The client can reuse the id
+        // as soon as it sent the message, and a late `complete` would end the operation that
+        // reuses it.
         override def remove(id: String): F[Unit] =
           subscriptions.flatModifyFull: (poll, s) =>
-            (s.removed(id), s.get(id).traverse_(sub => poll(stopAndComplete(id, sub))))
+            (s.removed(id), s.get(id).traverse_(sub => poll(stopOnly(id, sub))))
 
         override def removeAll: F[Unit] =
           subscriptions.flatModifyFull: (poll, s) =>

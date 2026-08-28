@@ -15,8 +15,11 @@ import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
 import clue.model.StreamingMessage.FromClient.*
 import clue.model.StreamingMessage.FromServer.*
+import fs2.Stream
 import grackle.Operation
+import grackle.Result
 import grackle.Result.*
+import io.circe.Json
 import io.circe.JsonObject
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
@@ -68,7 +71,7 @@ object Connection {
     def start(id:  String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]])
 
     /**
-     * Terminates a Graph QL subscription associated with a particular id
+     * Stops the GraphQL operation associated with a particular id
      * @return state transition and action to execute
      */
     def stop(id: String): (ConnectionState[F], F[Unit])
@@ -146,9 +149,13 @@ object Connection {
         val document    = raw.query.value
         val parseResult = service.parse(document, raw.operationName, raw.variables)
         val name        = raw.operationName
+        // A subscription is its own event stream; a query or mutation is a one-element stream.
+        def events(op: Operation): Stream[F, Result[Json]] =
+          if (service.isSubscription(op)) service.subscribe(op, document, name)
+          else Stream.eval(service.query(op, document, name))
         val action = parseResult match {
-          case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name)
-          case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name) // n.b. warnings on subscribe are lost
+          case Success(op)        => startOperation(id, events(op))
+          case Warning(_, op)     => startOperation(id, events(op)) // n.b. warnings on start are lost
           case Failure(ps)        => send(Reply.Send(Error(id, mkGraphqlErrors(ps)))).as(none)
           case InternalError(err) => send(Reply.Send(Error(id, mkGraphqlErrors(err)))).as(none)
         }
@@ -167,31 +174,13 @@ object Connection {
             span.addAttributes(service.props*) >>
             fa
 
-      // The protocol reserves close code 4409 for a `subscribe` message that uses an id that is
-      // already active. The subscription map reports the duplicate and the connection closes.
-      def subscribe(
-        id:            String,
-        request:       Operation,
-        document:      String,
-        operationName: Option[String]
-      ): F[Option[GraphQLWSError]] =
+      // Every operation runs as an event stream in the subscription map, so a slow operation
+      // does not block the receive loop and a client `complete` message can cancel it. The
+      // protocol reserves close code 4409 for an id that is already active.
+      def startOperation(id: String, events: Stream[F, Result[Json]]): F[Option[GraphQLWSError]] =
         inOperationSpan(id):
-          subscriptions.add(id, service.subscribe(request, document, operationName)).map: added =>
+          subscriptions.add(id, events).map: added =>
             Option.unless(added)(GraphQLWSError.SubscriberAlreadyExists(id))
-
-      def execute(
-        id:            String,
-        request:       Operation,
-        document:      String,
-        operationName: Option[String]
-      ): F[Option[GraphQLWSError]] =
-        inOperationSpan(id):
-          service.query(request, document, operationName).flatMap { r =>
-            mkFromServer(r, id).flatMap {
-              case Right(data) => send(Reply.Send(data)) *> send(Reply.Send(FromServer.Complete(id)))
-              case Left(error) => send(Reply.Send(error))
-            }
-          }.as(none)
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (closed, subscriptions.removeAll *> send(lastReply(reason)))
