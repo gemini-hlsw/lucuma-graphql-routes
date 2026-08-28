@@ -5,6 +5,8 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
+import grackle.Cursor
+import grackle.Query
 import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
@@ -19,20 +21,39 @@ import org.typelevel.ci.*
 //   ping         - a plain success
 //   nullableFail - a field error on a nullable field
 //   nonNullFail  - a field error on a non-null field
+//   effectFail   - an effect handler failure, which aborts execution with a bare
+//                  `Result.Failure` that carries no data
+//   internalFail - an internal error result, which `mkResponse` raises as an exception
+//   effectThrow  - an effect handler that raises an exception in `F`
 object ResponseStatusMapping extends CirceMapping[IO]:
   val schema = schema"""
     type Query {
       ping: String!
       nullableFail: String
       nonNullFail: String!
+      effectFail: String!
+      internalFail: String!
+      effectThrow: String!
     }
   """
   val QueryType    = schema.ref("Query")
+
+  private val failingHandler = new Query.EffectHandler[IO]:
+    def runEffects(queries: List[(Query, Cursor)]): IO[Result[List[Cursor]]] =
+      Result.failure[List[Cursor]]("effect boom").pure[IO]
+
+  private val throwingHandler = new Query.EffectHandler[IO]:
+    def runEffects(queries: List[(Query, Cursor)]): IO[Result[List[Cursor]]] =
+      IO.raiseError(new RuntimeException("secret effect detail"))
+
   val typeMappings = TypeMappings.unchecked(
     ObjectMapping(QueryType)(
       CursorFieldJson("ping", _ => Result.success(Json.fromString("pong")), Nil),
       CursorFieldJson("nullableFail", _ => Result.failure("nullable boom"), Nil),
-      CursorFieldJson("nonNullFail", _ => Result.failure("non-null boom"), Nil)
+      CursorFieldJson("nonNullFail", _ => Result.failure("non-null boom"), Nil),
+      EffectField("effectFail", failingHandler, Nil),
+      CursorFieldJson("internalFail", _ => Result.internalError(new RuntimeException("secret internal detail")), Nil),
+      EffectField("effectThrow", throwingHandler, Nil)
     )
   )
 
@@ -46,11 +67,18 @@ class ResponseStatusSuite extends BaseSuite:
   // These tests are about the status of a modern client, so they ask for the GraphQL media type.
   private val AcceptGraphQL = Header.Raw(ci"Accept", "application/graphql-response+json")
 
-  private def post(query: String, operationName: Option[String] = None): IO[(Status, Json)] =
+  // A legacy client asks for `application/json`, so it never gets status 294.
+  private val AcceptJson = Header.Raw(ci"Accept", "application/json")
+
+  private def post(
+    query:         String,
+    operationName: Option[String] = None,
+    accept:        Header.Raw = AcceptGraphQL
+  ): IO[(Status, Json)] =
     rawResponse: uri =>
       val fields = List("query" -> Json.fromString(query)) ++
         operationName.map(n => "operationName" -> Json.fromString(n))
-      Request[IO](Method.POST, uri).withEntity(Json.fromFields(fields)).putHeaders(AcceptGraphQL)
+      Request[IO](Method.POST, uri).withEntity(Json.fromFields(fields)).putHeaders(accept)
     .map((status, _, body) => (status, parser.parse(body).getOrElse(Json.Null)))
 
   private def get(query: String): IO[(Status, Json)] =
@@ -63,6 +91,10 @@ class ResponseStatusSuite extends BaseSuite:
 
   private def hasData(body: Json): Boolean =
     body.hcursor.downField("data").succeeded
+
+  // The `data` entry is present and null. The specification requires this entry for a field error.
+  private def hasNullData(body: Json): Boolean =
+    body.hcursor.downField("data").as[Option[Json]] == Right(None)
 
   // --- success ----------------------------------------------------------------
 
@@ -79,13 +111,13 @@ class ResponseStatusSuite extends BaseSuite:
   test("a field error on a nullable field returns 294 with a null data entry"):
     post("query { nullableFail }").map: (status, body) =>
       assertEquals(status.code, 294)
-      assertEquals(body.hcursor.downField("data").as[Option[Json]], Right(None))
+      assert(hasNullData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
 
   test("a field error on a non-null field returns 294 with a null data entry"):
     post("query { nonNullFail }").map: (status, body) =>
       assertEquals(status.code, 294)
-      assertEquals(body.hcursor.downField("data").as[Option[Json]], Right(None))
+      assert(hasNullData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
 
   // A field error next to a field that succeeds still gives status 294.
@@ -104,7 +136,7 @@ class ResponseStatusSuite extends BaseSuite:
     rawResponse: uri =>
       Request[IO](Method.POST, uri)
         .withEntity(Json.obj("query" -> Json.fromString("query { nullableFail }")))
-        .putHeaders(Header.Raw(ci"Accept", "application/json"))
+        .putHeaders(AcceptJson)
     .map: (status, headers, text) =>
       val body = parser.parse(text).getOrElse(Json.Null)
       assertEquals(status, Status.Ok)
@@ -122,6 +154,64 @@ class ResponseStatusSuite extends BaseSuite:
       assert(hasErrors(parser.parse(text).getOrElse(Json.Null)))
       val contentType = headers.get(ci"Content-Type").map(_.head.value)
       assert(contentType.exists(_.startsWith("application/json")), s"Got: $contentType")
+
+  // An effect handler failure aborts execution, so grackle returns a `Result.Failure` with no
+  // data. The error comes from execution, so the specification treats it as a field error: the
+  // response must have a `data` entry, which is null, and a 2xx status.
+  test("an effect handler failure returns 294 with a null data entry"):
+    post("query { effectFail }").map: (status, body) =>
+      assertEquals(status.code, 294)
+      assert(hasNullData(body), body.spaces2)
+      assert(hasErrors(body), body.spaces2)
+
+  test("a legacy client gets 200 with a null data entry for an effect handler failure"):
+    post("query { effectFail }", accept = AcceptJson).map: (status, body) =>
+      assertEquals(status, Status.Ok)
+      assert(hasNullData(body), body.spaces2)
+      assert(hasErrors(body), body.spaces2)
+
+  test("GET of an effect handler failure returns 294 with a null data entry"):
+    get("query { effectFail }").map: (status, body) =>
+      assertEquals(status.code, 294)
+      assert(hasNullData(body), body.spaces2)
+      assert(hasErrors(body), body.spaces2)
+
+  // --- internal errors --------------------------------------------------------
+
+  // The specification requires a well-formed GraphQL response body for the GraphQL media type at
+  // every status. An unexpected server error gives status 500 with an `errors` entry, a generic
+  // message, and no `data` entry.
+  test("an internal error returns 500 with a GraphQL error body"):
+    rawResponse: uri =>
+      Request[IO](Method.POST, uri)
+        .withEntity(Json.obj("query" -> Json.fromString("query { internalFail }")))
+        .putHeaders(AcceptGraphQL)
+    .map: (status, headers, text) =>
+      val body = parser.parse(text).getOrElse(Json.Null)
+      assertEquals(status, Status.InternalServerError)
+      assert(hasErrors(body), text)
+      assert(!hasData(body), text)
+      assert(!text.contains("secret internal detail"), text)
+      val contentType = headers.get(ci"Content-Type").map(_.head.value)
+      assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+
+  test("an exception raised by an effect handler returns 500 with a GraphQL error body"):
+    post("query { effectThrow }").map: (status, body) =>
+      assertEquals(status, Status.InternalServerError)
+      assert(hasErrors(body), body.spaces2)
+      assert(!hasData(body), body.spaces2)
+      assert(!body.spaces2.contains("secret effect detail"), body.spaces2)
+
+  test("a legacy client gets a GraphQL error body for an internal error"):
+    post("query { internalFail }", accept = AcceptJson).map: (status, body) =>
+      assertEquals(status, Status.InternalServerError)
+      assert(hasErrors(body), body.spaces2)
+
+  test("GET of an internal error returns 500 with a GraphQL error body"):
+    get("query { internalFail }").map: (status, body) =>
+      assertEquals(status, Status.InternalServerError)
+      assert(hasErrors(body), body.spaces2)
+      assert(!hasData(body), body.spaces2)
 
   // --- request errors ---------------------------------------------------------
 
@@ -153,8 +243,9 @@ class ResponseStatusSuite extends BaseSuite:
 
   // --- a result without data --------------------------------------------------
 
-  // Grackle keeps the `data` entry for a field error, so a response without `data` comes from a
-  // result that carries no value. The specification forbids a 2xx status for such a response.
+  // A result that carries no value comes from the parse stage, because the handler gives an
+  // execution failure the value `null`. The specification forbids a 2xx status for a response
+  // without a `data` entry.
   test("a result without a value returns 422"):
     new HttpRouteHandler(GraphQLService(ResponseStatusMapping), ResponseMediaType.GraphQL)
       .toResponse(Result.failure[Json]("boom"))
