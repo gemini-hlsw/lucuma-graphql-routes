@@ -54,6 +54,7 @@ lazy val core = project
       ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.Subscriptions.*"),
       ProblemFilters.exclude[IncompatibleMethTypeProblem]("lucuma.graphql.routes.Subscriptions#Subscription.*"),
       ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.Subscriptions#Subscription.*"),
+      ProblemFilters.exclude[ReversedMissingMethodProblem]("lucuma.graphql.routes.Connection#ConnectionState.*"),
       ProblemFilters.exclude[MissingClassProblem]("lucuma.graphql.routes.package"),
       ProblemFilters.exclude[MissingClassProblem]("lucuma.graphql.routes.package$")
     ),

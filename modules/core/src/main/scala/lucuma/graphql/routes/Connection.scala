@@ -5,11 +5,13 @@ package lucuma.graphql.routes
 
 import cats.MonadError
 import cats.MonadThrow
-import cats.effect.Concurrent
+import cats.effect.Deferred
 import cats.effect.Ref
 import cats.effect.Resource
+import cats.effect.Temporal
 import cats.effect.std.Queue
 import cats.effect.std.Supervisor
+import cats.effect.syntax.all.*
 import cats.syntax.all.*
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
@@ -27,6 +29,8 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.syntax.*
 import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.trace.Tracer
+
+import scala.concurrent.duration.*
 
 /** A web-socket connection that receives messages from a client and processes them. */
 sealed trait Connection[F[_]] {
@@ -47,7 +51,7 @@ object Connection {
 
   /**
    * Connection is a state machine that (typically) transitions from states `PendingInit` to
-   * `Connected` to `Terminated` as it receives messages from the client.
+   * `Connected` to `Closed` as it receives messages from the client.
    */
   sealed trait ConnectionState[F[_]] {
 
@@ -81,6 +85,12 @@ object Connection {
      * @return state transition and action
      */
     def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit])
+
+    /**
+     * Handles the expiry of the wait time for `connection_init`.
+     * @return state transition and action to execute
+     */
+    def initTimedOut: (ConnectionState[F], F[Unit])
 
   }
 
@@ -119,6 +129,9 @@ object Connection {
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (closed, replyQueue.offer(lastReply(reason)))
+
+      override def initTimedOut: (ConnectionState[F], F[Unit]) =
+        close(GraphQLWSError.InitializationTimeout.some)
 
     }
 
@@ -184,6 +197,10 @@ object Connection {
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (closed, subscriptions.removeAll *> send(lastReply(reason)))
+
+      // `connection_init` arrived in time, so the expiry of the timer means nothing here.
+      override def initTimedOut: (ConnectionState[F], F[Unit]) =
+        (this, ().pure[F])
     }
 
   /**
@@ -214,26 +231,38 @@ object Connection {
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (this, M.unit)
+
+      override def initTimedOut: (ConnectionState[F], F[Unit]) =
+        ignore("connection_init timeout")(())
     }
 
-  def apply[F[_]: {Concurrent, Logger, Tracer as T}](
+  /** The wait time for `connection_init`. The protocol reserves close code 4408 for its expiry. */
+  val ConnectionInitWaitTimeout: FiniteDuration = 10.seconds
+
+  def apply[F[_]: {Temporal, Logger, Tracer as T}](
     service: Option[Authorization] => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Reply]
   ): Resource[F, Connection[F]] =
     Supervisor[F].flatMap(supervisor => Resource.make(build(service, replyQueue, supervisor))(_.close))
 
-  private def build[F[_]: {Concurrent, Logger, Tracer as T}](
+  private def build[F[_]: {Temporal, Logger, Tracer as T}](
     service: Option[Authorization] => F[Option[GraphQLService[F]]],
     replyQueue: Queue[F, Reply],
     supervisor: Supervisor[F]
   ): F[Connection[F]] =
 
-    Ref.of(pendingInit[F](replyQueue)).map { stateRef =>
+    (Ref.of(pendingInit[F](replyQueue)), Deferred[F, Unit]).flatMapN { (stateRef, initReceived) =>
 
-      new Connection[F] {
+      def handle[A](f: ConnectionState[F] => (ConnectionState[F], F[A])): F[A] =
+        stateRef.modify(f).flatten
 
-        def handle[A](f: ConnectionState[F] => (ConnectionState[F], F[A])): F[A] =
-          stateRef.modify(f).flatten
+      /**
+       * The timer for the `connection_init` message. If it expires, the connection is closed with code 4408. If the message arrives in time, the timer does nothing.
+       */
+      val initTimer: F[Unit] =
+        initReceived.get.timeoutTo(ConnectionInitWaitTimeout, handle(_.initTimedOut))
+
+      val connection = new Connection[F] {
 
         // The one way to send a reply to the client. It offers the reply to the queue and logs it.
         val reply: Reply => F[Unit] = { m =>
@@ -296,7 +325,7 @@ object Connection {
         override def receive(m: FromClient): F[Unit] =
           debug"received $m" *> {
             m match {
-              case ConnectionInit(m)       => init(m)
+              case ConnectionInit(m)       => initReceived.complete(()).void *> init(m)
               case Subscribe(id, request)  => handle(_.start(id, request)).flatMap(_.traverse_(e => handle(_.close(e.some))))
               case FromClient.Complete(id) => handle(_.stop(id))
               case FromClient.Ping(_)      => reply(Reply.Send(FromServer.Pong()))
@@ -307,5 +336,7 @@ object Connection {
         override def close: F[Unit] =
           handle(_.close(none))
       }
+
+      supervisor.supervise(initTimer).as(connection)
     }
 }
