@@ -5,60 +5,18 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
-import fs2.Stream
-import grackle.Query.Binding
-import grackle.QueryCompiler.Elab
-import grackle.QueryCompiler.SelectElaborator
-import grackle.Result
-import grackle.Schema
-import grackle.Value.StringValue
-import grackle.circe.CirceMapping
-import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
 import org.http4s.headers.Authorization
-
-import scala.concurrent.duration.*
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
 
 // This suite tests that variables make it through.
 
-object VariablesMapping extends CirceMapping[IO]:
-  val schema = schema"""
-    type Query {
-      echo(s: String): String!
-    }
-    type Subscription {
-      echo(s: String): String!
-      empty: String!
-      ticks: String!
-    }
-  """
-  val QueryType        = schema.ref("Query")
-  val SubscriptionType = schema.ref("Subscription")
-  val typeMappings     = TypeMappings.unchecked(
-    ObjectMapping(QueryType, List(
-      CursorFieldJson("echo", c => c.envR[String]("s").map(Json.fromString), Nil)
-    )),
-    ObjectMapping(SubscriptionType, List(
-      RootStream.computeJson("echo"): (_, e) =>
-        val r = e.getR[String]("s").map(Json.fromString)
-        Stream(r, r, r).covary[IO],
-      RootStream.computeJson("empty"): (_, _) =>
-        Stream.empty.covary[IO],
-      // A source stream that never ends, so a test can close the subscription while it runs.
-      RootStream.computeJson("ticks"): (_, _) =>
-        Stream.awakeEvery[IO](25.milliseconds).as(Result(Json.fromString("tick")))
-    ))
-  )
-  override val selectElaborator = SelectElaborator:
-    case (_, "echo", List(Binding("s", StringValue(s)))) => Elab.env("s" -> s)
-
 class VariablesSuite extends BaseSuite:
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(VariablesMapping).some.pure[IO]
+    GraphQLService(TestMapping).some.pure[IO]
 
   def testQuery(option: ClientOption): IO[Unit] =
     expect(

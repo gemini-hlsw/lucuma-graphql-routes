@@ -149,7 +149,7 @@ class SubscriptionsSuite extends CatsEffectSuite:
         obt <- log
       yield assertEquals(obt, List("error:1"))
 
-  test("remove on a running subscription produces exactly one Complete"):
+  test("remove on a running subscription sends no Complete"):
     run: (subs, log) =>
       for
         _   <- subs.add("1", Stream.awakeEvery[IO](25.milliseconds).as(ok))
@@ -159,7 +159,7 @@ class SubscriptionsSuite extends CatsEffectSuite:
         obt <- log
       yield
         assert(obt.count(_ === "next:1") >= 1, "the stream sent nothing before remove")
-        assertEquals(obt.count(_ === "complete:1"), 1)
+        assertEquals(obt.count(_ === "complete:1"), 0)
 
   test("a subscribe with an id that is active reports a duplicate and sends nothing"):
     run: (subs, log) =>

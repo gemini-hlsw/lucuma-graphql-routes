@@ -18,9 +18,9 @@ import scala.concurrent.duration.*
 class SubscriptionCompleteSuite extends BaseSuite:
 
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(VariablesMapping).some.pure[IO]
+    GraphQLService(TestMapping).some.pure[IO]
 
-  // VariablesMapping's Subscription.echo emits exactly 3 results and then ends.
+  // TestMapping's Subscription.echo emits exactly 3 results and then ends.
   private val echoQuery: String    = """subscription($abc: String) { echo(s: $abc) }"""
   private val echoVars: JsonObject = Json.obj("abc" -> Json.fromString("foo")).asObject.get
   private val expected: List[Json] = List.fill(3)(json"""{ "echo": "foo" }""")
