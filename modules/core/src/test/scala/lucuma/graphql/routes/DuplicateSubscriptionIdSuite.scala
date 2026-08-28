@@ -1,0 +1,74 @@
+// Copyright (c) 2016-2025 Association of Universities for Research in Astronomy, Inc. (AURA)
+// For license information see LICENSE or https://opensource.org/licenses/BSD-3-Clause
+
+package lucuma.graphql.routes
+
+import cats.effect.IO
+import cats.effect.testkit.TestControl
+import cats.syntax.all.*
+import clue.model.StreamingMessage.FromClient
+import clue.model.json.given
+import io.circe.parser.decode
+import munit.CatsEffectSuite
+import org.typelevel.log4cats.Logger
+import org.typelevel.otel4s.trace.Tracer
+
+import scala.concurrent.duration.*
+
+/**
+ * The graphql-transport-ws protocol reserves close code 4409 for a `subscribe` message that uses
+ * an id that is already active. This suite checks the path from the client message to the reply
+ * queue of the connection.
+ */
+final class DuplicateSubscriptionIdSuite extends CatsEffectSuite:
+
+  given Logger[IO] = BaseSuite.logger
+  given Tracer[IO] = Tracer.noop[IO]
+
+  private def fromClient(s: String): FromClient =
+    decode[FromClient](s).fold(throw _, identity)
+
+  private val init: FromClient =
+    fromClient("""{"type":"connection_init"}""")
+
+  // The `ticks` source stream never ends, so the subscription stays active.
+  private def subscribe(id: String): FromClient =
+    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"subscription { ticks }"}}""")
+
+  private def complete(id: String): FromClient =
+    fromClient(s"""{"id":"$id","type":"complete"}""")
+
+  // Sends the messages to an initialized connection on the virtual clock, then returns every
+  // reply that the connection made, after the messages settle.
+  private def repliesAfter(ms: FromClient*): IO[List[Reply]] =
+    TestControl.executeEmbed:
+      BaseSuite
+        .connectionResource(_ => GraphQLService(VariablesMapping).some.pure[IO])
+        .use: (conn, queue) =>
+          conn.receive(init) *>
+            ms.toList.traverse_(conn.receive) *>
+            IO.sleep(1.second) *>
+            queue.tryTakeN(none)
+
+  private val alreadyExists: Reply =
+    Reply.CloseWith(GraphQLWSError.SubscriberAlreadyExists("1"))
+
+  test("a second subscribe with an active id closes the socket with code 4409"):
+    repliesAfter(subscribe("1"), subscribe("1")).map: obt =>
+      assert(obt.contains(alreadyExists), s"expected a 4409 close request, got $obt")
+
+  test("a second subscribe with an active id ends the reply stream"):
+    repliesAfter(subscribe("1"), subscribe("1")).map: obt =>
+      assertEquals(obt.lastOption, alreadyExists.some, s"the close was not the last reply: $obt")
+
+  test("a message that arrives after the close is ignored"):
+    repliesAfter(subscribe("1"), subscribe("1"), complete("2"), subscribe("3"), init).map: obt =>
+      assertEquals(obt.lastOption, alreadyExists.some, s"the close was not the last reply: $obt")
+
+  test("a subscribe with a free id does not close the socket"):
+    repliesAfter(subscribe("1"), subscribe("2")).map: obt =>
+      assert(!obt.contains(alreadyExists), s"the second id closed the socket, got $obt")
+
+  test("an id is free again after the client sends complete"):
+    repliesAfter(subscribe("1"), complete("1"), subscribe("1")).map: obt =>
+      assert(!obt.contains(alreadyExists), s"the reused id closed the socket, got $obt")

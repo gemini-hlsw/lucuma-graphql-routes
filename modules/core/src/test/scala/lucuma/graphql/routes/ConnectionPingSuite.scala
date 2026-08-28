@@ -4,6 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.effect.IO
+import cats.effect.Resource
 import cats.effect.std.Queue
 import cats.syntax.all.*
 import clue.model.StreamingMessage.FromClient
@@ -12,7 +13,6 @@ import io.circe.Json
 import io.circe.JsonObject
 import munit.CatsEffectSuite
 import org.typelevel.log4cats.Logger
-import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.otel4s.trace.Tracer
 
 /**
@@ -22,38 +22,33 @@ import org.typelevel.otel4s.trace.Tracer
  */
 final class ConnectionPingSuite extends CatsEffectSuite:
 
-  private type Reply = Option[Either[GraphQLWSError, FromServer]]
-
-  given Logger[IO] = Slf4jLogger.getLoggerFromName("lucuma-graphql-routes-test")
+  given Logger[IO] = BaseSuite.logger
   given Tracer[IO] = Tracer.noop[IO]
 
   /** A connection whose service always refuses, so that no test needs a schema. */
-  private val connection: IO[(Connection[IO], Queue[IO, Reply])] =
-    for
-      queue <- Queue.unbounded[IO, Reply]
-      conn  <- Connection[IO](_ => IO.none, queue)
-    yield (conn, queue)
+  private val connection: Resource[IO, (Connection[IO], Queue[IO, Reply])] =
+    BaseSuite.connectionResource(_ => IO.none)
 
   test("A Ping before ConnectionInit gets a Pong reply"):
-    connection.flatMap: (conn, queue) =>
+    connection.use: (conn, queue) =>
       conn.receive(FromClient.Ping()) *>
-        queue.take.assertEquals(FromServer.Pong().asRight.some)
+        queue.take.assertEquals(Reply.Send(FromServer.Pong()))
 
   test("A Ping with a payload gets a Pong reply without a payload"):
     val payload = JsonObject("seq" -> Json.fromInt(1))
-    connection.flatMap: (conn, queue) =>
+    connection.use: (conn, queue) =>
       conn.receive(FromClient.Ping(payload.some)) *>
-        queue.take.assertEquals(FromServer.Pong().asRight.some)
+        queue.take.assertEquals(Reply.Send(FromServer.Pong()))
 
   test("A Ping does not close the connection"):
-    connection.flatMap: (conn, queue) =>
+    connection.use: (conn, queue) =>
       for
         _ <- conn.receive(FromClient.Ping())
-        _ <- queue.take.assertEquals(FromServer.Pong().asRight.some)
+        _ <- queue.take.assertEquals(Reply.Send(FromServer.Pong()))
         _ <- conn.receive(FromClient.Ping())
-        _ <- queue.take.assertEquals(FromServer.Pong().asRight.some)
+        _ <- queue.take.assertEquals(Reply.Send(FromServer.Pong()))
       yield ()
 
   test("A Pong from the client gets no reply"):
-    connection.flatMap: (conn, queue) =>
+    connection.use: (conn, queue) =>
       conn.receive(FromClient.Pong()) *> queue.tryTake.assertEquals(None)

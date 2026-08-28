@@ -7,7 +7,9 @@ import cats.MonadError
 import cats.MonadThrow
 import cats.effect.Concurrent
 import cats.effect.Ref
+import cats.effect.Resource
 import cats.effect.std.Queue
+import cats.effect.std.Supervisor
 import cats.syntax.all.*
 import clue.model.GraphQLRequest
 import clue.model.StreamingMessage.*
@@ -16,7 +18,6 @@ import clue.model.StreamingMessage.FromServer.*
 import grackle.Operation
 import grackle.Result.*
 import io.circe.JsonObject
-import lucuma.graphql.routes.mkGraphqlError
 import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
@@ -55,15 +56,16 @@ object Connection {
      */
     def reset(
       service: GraphQLService[F],
-      send: Option[Either[GraphQLWSError, FromServer]] => F[Unit],
+      send: Reply => F[Unit],
       subs: Subscriptions[F]
     ): (ConnectionState[F], F[Unit])
 
     /**
-     * Starts a Graph QL operation associated with a particular id.
-     * @return state transition and action to execute
+     * Starts a GraphQL operation associated with a particular id.
+     * @return state transition and action to execute. The action returns the error that must
+     *         close the connection, if any.
      */
-    def start(id:  String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit])
+    def start(id:  String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]])
 
     /**
      * Terminates a Graph QL subscription associated with a particular id
@@ -79,28 +81,32 @@ object Connection {
 
   }
 
+  // The last reply of a connection. It ends the reply stream, which closes the socket.
+  private def lastReply(reason: Option[GraphQLWSError]): Reply =
+    reason.fold(Reply.End)(Reply.CloseWith(_))
+
   /**
    * PendingInit state. Initial state, awaiting `connection_init` message that contains the user
    * authorization header. Once it receives it, we transition to `Connected`.
    */
   def pendingInit[F[_]: Logger: Tracer](
-    replyQueue: Queue[F, Option[Either[GraphQLWSError, FromServer]]]
+    replyQueue: Queue[F, Reply]
   )(implicit ev: MonadError[F, Throwable]): ConnectionState[F] =
 
     new ConnectionState[F] {
 
       override def reset(
         service: GraphQLService[F],
-        send: Option[Either[GraphQLWSError, FromServer]] => F[Unit],
+        send: Reply => F[Unit],
         subs: Subscriptions[F],
       ): (ConnectionState[F], F[Unit]) =
         (connected(service, send, subs),
-         send(ConnectionAck().asRight.some) *> send(FromServer.Ping().asRight.some)
+         send(Reply.Send(ConnectionAck())) *> send(Reply.Send(FromServer.Ping()))
         )
 
 
-      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
-        doClose(s"start($id, $req)")
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]]) =
+        doClose(s"start($id, $req)").map(_.as(none))
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
         doClose(s"stop($id)")
@@ -109,7 +115,7 @@ object Connection {
         close(GraphQLWSError.Unauthorized(m).some)
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
-        (closed, replyQueue.offer(reason.map(_.asLeft)))
+        (closed, replyQueue.offer(lastReply(reason)))
 
     }
 
@@ -119,7 +125,7 @@ object Connection {
    */
   def connected[F[_]: {Logger, MonadThrow, Tracer as T}](
     service:       GraphQLService[F],
-    send:          Option[Either[GraphQLWSError, FromServer]] => F[Unit],
+    send:          Reply => F[Unit],
     subscriptions: Subscriptions[F]
   ): ConnectionState[F] =
 
@@ -127,24 +133,24 @@ object Connection {
 
       override def reset(
         service: GraphQLService[F],
-        r: Option[Either[GraphQLWSError, FromServer]] => F[Unit],
+        r: Reply => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
         (connected(service, r, s),
           subscriptions.removeAll  *>
-            r(ConnectionAck().asRight.some) *>
-            r(FromServer.Ping().asRight.some)
+            r(Reply.Send(ConnectionAck())) *>
+            r(Reply.Send(FromServer.Ping()))
         )
 
-      override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) = {
+      override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]]) = {
         val document    = raw.query.value
         val parseResult = service.parse(document, raw.operationName, raw.variables)
         val name        = raw.operationName
         val action = parseResult match {
           case Success(op)        => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name)
           case Warning(_, op)     => if (service.isSubscription(op)) subscribe(id, op, document, name) else execute(id, op, document, name) // n.b. warnings on subscribe are lost
-          case Failure(ps)        => send(Error(id, ps.toNonEmptyList.map(mkGraphqlError)).asRight.some)
-          case InternalError(err) => send(Error(id, mkGraphqlErrors(err)).asRight.some)
+          case Failure(ps)        => send(Reply.Send(Error(id, mkGraphqlErrors(ps)))).as(none)
+          case InternalError(err) => send(Reply.Send(Error(id, mkGraphqlErrors(err)))).as(none)
         }
         // Re-parent server spans on the client's remote context
         // This is valid if the client span has a W3C traceparent value in extensions)
@@ -154,74 +160,96 @@ object Connection {
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
         (this, subscriptions.remove(id))
 
+      // The attributes that the span of every client operation carries.
+      private def inOperationSpan[A](id: String)(fa: F[A]): F[A] =
+        T.withCurrentSpanOrNoop: span =>
+          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
+            span.addAttributes(service.props*) >>
+            fa
+
+      // The protocol reserves close code 4409 for a `subscribe` message that uses an id that is
+      // already active. The subscription map reports the duplicate and the connection closes.
       def subscribe(
         id:            String,
         request:       Operation,
         document:      String,
         operationName: Option[String]
-      ): F[Unit] =
-        T.withCurrentSpanOrNoop: span =>
-          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
-            span.addAttributes(service.props*) >>
-            subscriptions.add(id, service.subscribe(request, document, operationName))
+      ): F[Option[GraphQLWSError]] =
+        inOperationSpan(id):
+          subscriptions.add(id, service.subscribe(request, document, operationName)).map: added =>
+            Option.unless(added)(GraphQLWSError.SubscriberAlreadyExists(id))
 
       def execute(
         id:            String,
         request:       Operation,
         document:      String,
         operationName: Option[String]
-      ): F[Unit] =
-        T.withCurrentSpanOrNoop: span =>
-          span.addAttributes(Attribute("connection.fromclient.id", id)) >>
-            span.addAttributes(service.props*) >>
-            service.query(request, document, operationName).flatMap { r =>
-              mkFromServer(r, id).flatMap {
-                case Right(data) => send(data.asRight.some) *> send(FromServer.Complete(id).asRight.some)
-                case Left(error) => send(error.asRight.some)
-              }
+      ): F[Option[GraphQLWSError]] =
+        inOperationSpan(id):
+          service.query(request, document, operationName).flatMap { r =>
+            mkFromServer(r, id).flatMap {
+              case Right(data) => send(Reply.Send(data)) *> send(Reply.Send(FromServer.Complete(id)))
+              case Left(error) => send(Reply.Send(error))
             }
+          }.as(none)
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
-        (closed, subscriptions.removeAll *> send(reason.map(_.asLeft)))
+        (closed, subscriptions.removeAll *> send(lastReply(reason)))
     }
 
-  /** Closed state.  All requests raise an error, the connection having been closed. */
-  def closed[F[_]: MonadThrow as M]: ConnectionState[F] =
+  /**
+   * Closed state. The connection put its last reply on the queue, so it ignores every message
+   * that follows. A client can have messages in flight when the server closes the connection. An
+   * error here fails the socket before the close frame reaches the client, and the client sees an
+   * abnormal close with no code.
+   */
+  def closed[F[_]: {Logger, MonadThrow as M}]: ConnectionState[F] =
 
     new ConnectionState[F] {
 
-      private val raiseError: (ConnectionState[F], F[Unit]) =
-        (this, M.raiseError(new RuntimeException("Connection was terminated.")))
+      private def ignore[A](m: String)(a: A): (ConnectionState[F], F[A]) =
+        (this, debug"Ignoring $m because the connection closed.".as(a))
 
       override def reset(
         service: GraphQLService[F],
-        r: Option[Either[GraphQLWSError, FromServer]] => F[Unit],
+        r: Reply => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        raiseError
+        ignore("connection_init")(())
 
-      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Unit]) =
-        raiseError
+      override def start(id: String, req: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]]) =
+        ignore(s"subscribe($id)")(none[GraphQLWSError])
 
       override def stop(id: String): (ConnectionState[F], F[Unit]) =
-        raiseError
+        ignore(s"complete($id)")(())
 
       override def close(reason: Option[GraphQLWSError]): (ConnectionState[F], F[Unit]) =
         (this, M.unit)
     }
 
-
-  def apply[F[_]: {Logger, Tracer as T}](
+  def apply[F[_]: {Concurrent, Logger, Tracer as T}](
     service: Option[Authorization] => F[Option[GraphQLService[F]]],
-    replyQueue: Queue[F, Option[Either[GraphQLWSError, FromServer]]]
-  )(implicit F: Concurrent[F]): F[Connection[F]] =
+    replyQueue: Queue[F, Reply]
+  ): Resource[F, Connection[F]] =
+    Supervisor[F].flatMap(supervisor => Resource.make(build(service, replyQueue, supervisor))(_.close))
+
+  private def build[F[_]: {Concurrent, Logger, Tracer as T}](
+    service: Option[Authorization] => F[Option[GraphQLService[F]]],
+    replyQueue: Queue[F, Reply],
+    supervisor: Supervisor[F]
+  ): F[Connection[F]] =
 
     Ref.of(pendingInit[F](replyQueue)).map { stateRef =>
 
       new Connection[F] {
 
-        def handle(f: ConnectionState[F] => (ConnectionState[F], F[Unit])): F[Unit] =
+        def handle[A](f: ConnectionState[F] => (ConnectionState[F], F[A])): F[A] =
           stateRef.modify(f).flatten
+
+        // The one way to send a reply to the client. It offers the reply to the queue and logs it.
+        val reply: Reply => F[Unit] = { m =>
+          replyQueue.offer(m) *> debug"Reply $m enqueued"
+        }
 
         def parseAuthorization(
           connectionProps: JsonObject
@@ -240,12 +268,6 @@ object Connection {
          */
         def init(connectionProps: Option[JsonObject]): F[Unit] = T.span("connection.init").surround {
 
-          // Creates the function used to send replies to the client. It just offers a message to
-          // the reply queue and logs it.
-          val reply: Option[Either[GraphQLWSError, FromServer]] => F[Unit] = { m =>
-            replyQueue.offer(m) *> debug"Subscriptions send $m enqueued"
-          }
-
           // Given an optional Authorization, get a service and start a subscription (if allowed)
           def trySubscribe(opAuth: Option[Authorization]): F[Unit] =
             service(opAuth).flatMap {
@@ -254,7 +276,8 @@ object Connection {
               case Some(svc) =>
                 T.withCurrentSpanOrNoop:
                   _.addAttributes(svc.props*) >>
-                    Subscriptions(msg => reply(msg.map(_.asRight))).flatMap(s => handle(_.reset(svc, reply, s)))
+                    Subscriptions(supervisor, msg => reply(Reply.Send(msg)))
+                      .flatMap(s => handle(_.reset(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>
@@ -285,9 +308,9 @@ object Connection {
           debug"received $m" *> {
             m match {
               case ConnectionInit(m)       => init(m)
-              case Subscribe(id, request)  => handle(_.start(id, request))
+              case Subscribe(id, request)  => handle(_.start(id, request)).flatMap(_.traverse_(e => handle(_.close(e.some))))
               case FromClient.Complete(id) => handle(_.stop(id))
-              case FromClient.Ping(_)      => replyQueue.offer(FromServer.Pong().asRight.some)
+              case FromClient.Ping(_)      => reply(Reply.Send(FromServer.Pong()))
               case FromClient.Pong(_)      => debug"Received Pong from client"
             }
           }
