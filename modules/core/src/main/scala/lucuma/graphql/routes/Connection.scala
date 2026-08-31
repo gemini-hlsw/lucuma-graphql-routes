@@ -45,6 +45,12 @@ sealed trait Connection[F[_]] {
   /** Close the connection, never to be heard from again. */
   def close: F[Unit]
 
+  /**
+   * Close the connection with a protocol error, never to be heard from again. The client receives
+   * the code and the reason of the error in the close frame.
+   */
+  def closeWith(reason: GraphQLWSError): F[Unit]
+
 }
 
 object Connection {
@@ -299,7 +305,7 @@ object Connection {
 
               // User has insufficient privileges to connect.
               case None =>
-                  handle(_.close(GraphQLWSError.Forbidden("Insufficient privileges").some))
+                closeWith(GraphQLWSError.Forbidden("Insufficient privileges"))
 
             }
 
@@ -316,7 +322,7 @@ object Connection {
 
             // Authorization header is present but malformed.
             case Some(Left(_)) =>
-              handle(_.close(GraphQLWSError.Forbidden("Authorization property is malformed.").some))
+              closeWith(GraphQLWSError.Forbidden("Authorization property is malformed."))
 
           }
 
@@ -326,7 +332,7 @@ object Connection {
           debug"received $m" *> {
             m match {
               case ConnectionInit(m)       => initReceived.complete(()).void *> init(m)
-              case Subscribe(id, request)  => handle(_.start(id, request)).flatMap(_.traverse_(e => handle(_.close(e.some))))
+              case Subscribe(id, request)  => handle(_.start(id, request)).flatMap(_.traverse_(closeWith))
               case FromClient.Complete(id) => handle(_.stop(id))
               case FromClient.Ping(_)      => reply(Reply.Send(FromServer.Pong()))
               case FromClient.Pong(_)      => debug"Received Pong from client"
@@ -335,6 +341,9 @@ object Connection {
 
         override def close: F[Unit] =
           handle(_.close(none))
+
+        override def closeWith(reason: GraphQLWSError): F[Unit] =
+          handle(_.close(reason.some))
       }
 
       supervisor.supervise(initTimer).as(connection)

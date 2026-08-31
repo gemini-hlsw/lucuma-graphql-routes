@@ -27,6 +27,8 @@ import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
 import org.http4s.client.Client
 import org.http4s.client.websocket.WSClient
+import org.http4s.client.websocket.WSFrame
+import org.http4s.client.websocket.WSRequest
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.Authorization
 import org.http4s.jdkhttpclient.JdkHttpClient
@@ -34,6 +36,7 @@ import org.http4s.jdkhttpclient.JdkWSClient
 import org.http4s.server.Server
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{Uri as Http4sUri, *}
+import org.typelevel.ci.*
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.otel4s.trace.Tracer
@@ -104,9 +107,12 @@ abstract class BaseSuite extends CatsEffectSuite:
     val hs  = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
     Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
 
+  private def wsUri(svr: Server): Http4sUri =
+    (svr.baseUri / "ws").copy(scheme = Http4sUri.Scheme.unsafeFromString("ws").some)
+
   protected def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
     val sbe = Http4sWebSocketBackend[IO](wsClientFixture())
-    val uri = (svr.baseUri / "ws").copy(scheme = Some(Http4sUri.Scheme.unsafeFromString("ws")))
+    val uri = wsUri(svr)
     val ps  = bearerToken.fold(Map.empty)(s => Map("Authorization" -> Json.fromString(s"Bearer $s")))
     for
       sc <- Resource.eval(Http4sWebSocketClient.of[IO, Nothing](uri)(using Async[IO], Logger[IO], sbe))
@@ -120,6 +126,19 @@ abstract class BaseSuite extends CatsEffectSuite:
     Resource.eval(IO(serverFixture()))
       .flatMap(svr => JdkHttpClient.simple[IO].flatMap(_.run(mkRequest(svr.baseUri / "graphql"))))
       .use(resp => resp.bodyText.compile.string.map((resp.status, resp.headers, _)))
+
+  // Opens a raw WebSocket to the `/ws` endpoint, sends the frames, and returns the first `count`
+  // frames that the server sends. The stream stops early if the server closes the socket. Use this
+  // to send frames that a GraphQL client cannot send, such as a fragment or a message that is not
+  // valid JSON.
+  protected def rawWsFrames(count: Int)(frames: WSFrame*): IO[List[WSFrame]] =
+    val request = (svr: Server) =>
+      WSRequest(wsUri(svr)).withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
+    Resource.eval(IO(serverFixture()))
+      .flatMap(svr => wsClientFixture().connect(request(svr)))
+      // The client queues every frame that arrives, so a send before the read loses nothing.
+      .use(conn => conn.sendMany(frames.toList) *> conn.receiveStream.take(count.toLong).compile.toList)
+      .timeout(10.seconds)
 
   protected lazy val serverFixture: IOFixture[Server] =
     ResourceSuiteLocalFixture("server", server)

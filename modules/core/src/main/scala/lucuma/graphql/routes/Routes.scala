@@ -41,6 +41,9 @@ import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.syntax.*
 import org.typelevel.otel4s.trace.Tracer
 
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
 
 object Routes {
@@ -334,9 +337,29 @@ object WsRouteHandler {
   private def redactAuth(s: String): String =
     AuthRegEx.replaceFirstIn(s, RedactedAuth)
 
+  // The protocol limits the reason of a close frame to 123 bytes of UTF-8.
+  private val CloseReasonMaxBytes = 123
+  private val Ellipsis            = "..."
+
+  /**
+   * Shortens the reason of a close frame to the limit of the protocol. A cut can fall inside a
+   * character of several bytes, and the decoder drops the incomplete sequence that it leaves. A
+   * reason over the limit produces no frame at all, so every reason passes through here.
+   */
+  private def closeReason(s: String): String =
+    val bytes = s.getBytes(UTF_8)
+    if bytes.length <= CloseReasonMaxBytes then s
+    else
+      UTF_8
+        .newDecoder
+        .onMalformedInput(CodingErrorAction.IGNORE)
+        .decode(ByteBuffer.wrap(bytes, 0, CloseReasonMaxBytes - Ellipsis.length))
+        .toString + Ellipsis
+
 }
 
 class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
+  import WsRouteHandler.closeReason
   import WsRouteHandler.redactAuth
 
   val KeepAliveDuration: FiniteDuration =
@@ -375,7 +398,7 @@ class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option
           debug"Sending to client: ${trimmed(s)}".as(Text(s).some)
         case Reply.CloseWith(err)              =>
           warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
-            .as(Close(err.code, err.reason).orElse(Close(err.code)).toOption)
+            .as(Close(err.code, closeReason(err.reason)).orElse(Close(err.code)).toOption)
         case Reply.End                         =>
           debug"Ending the reply stream - Closing connection".as(none)
       }
@@ -389,13 +412,18 @@ class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option
         .through(toFrames)
         .mergeHaltL(keepAliveStream.through(toFrames))
 
-    // Input from the client. A frame that the server cannot handle fails the stream.
+    // Input from the client. A frame that the server cannot handle closes the connection with the
+    // code that the protocol reserves for it. The close goes through the connection, so the state
+    // machine stops every subscription and ignores the messages that follow.
     def receive(connection: Connection[F]): Pipe[F, WebSocketFrame, Nothing] =
+      def closeInvalid(detail: String): F[Unit] =
+        connection.closeWith(GraphQLWSError.InvalidMessage(detail))
+
       _.evalTap(logWebSocketFrame)
         .evalMap {
           case Text(s, _) =>
             Either.catchNonFatal(parser.decode[FromClient](s)).flatten.fold(
-              e => Concurrent[F].raiseError[Unit](new RuntimeException(s"Could not parse client message $s as FromClient: $e")),
+              e => closeInvalid(e.getMessage),
               m => connection.receive(m)
             )
 
@@ -403,7 +431,7 @@ class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option
             connection.close
 
           case f          =>
-            Concurrent[F].raiseError[Unit](new RuntimeException(s"Expected a Text WebSocketFrame from Client, but got $f"))
+            closeInvalid(s"expected a text frame, got ${f.getClass.getSimpleName}")
         }
         .drain
 
