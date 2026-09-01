@@ -66,7 +66,7 @@ object Subscriptions {
     val stop: F[Unit] = fiber.get.flatMap(_.cancel)
   }
 
-  def apply[F[_]: Logger: Concurrent](
+  def apply[F[_]: {Concurrent, Logger as L}](
     supervisor: Supervisor[F],
     send:       FromServer => F[Unit]
   ): F[Subscriptions[F]] =
@@ -78,7 +78,7 @@ object Subscriptions {
          * Cancels the subscription without sending a terminal message to the client.
          */
         private def stopOnly(id: String, s: Subscription[F]): F[Unit] =
-          s.stop.handleErrorWith(t => Logger[F].warn(t)(s"could not remove operation $id"))
+          s.stop.handleErrorWith(t => L.warn(t)(s"could not remove operation $id"))
 
         /**
          * Cancels the subscription and sends a terminal message to the client, unless an `error`
@@ -86,7 +86,7 @@ object Subscriptions {
          */
         private def stopAndComplete(id: String, s: Subscription[F]): F[Unit] =
           (s.stop *> s.errorSent.get.flatMap(err => send(Complete(id)).unlessA(err)))
-            .handleErrorWith(t => Logger[F].warn(t)(s"could not remove operation $id"))
+            .handleErrorWith(t => L.warn(t)(s"could not remove operation $id"))
 
         /**
          * Inserts a new operation and starts its event stream. If the id is already in use, the
@@ -101,15 +101,15 @@ object Subscriptions {
             if (m.contains(id))
               (
                 m,
-                Logger[F].debug(s"duplicate operation id $id").as(false)
+                L.debug(s"duplicate operation id $id").as(false)
               )
             else
               (m.updated(id, entry),
                for
-                 _     <- Logger[F].debug(s"starting event stream $id")
+                 _     <- L.debug(s"starting event stream $id")
                  fiber <- supervisor.supervise(run)
                  _     <- entry.fiber.complete(fiber)
-                 _     <- Logger[F].debug(s"started event stream $id")
+                 _     <- L.debug(s"started event stream $id")
                yield true
               )
 

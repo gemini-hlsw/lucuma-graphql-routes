@@ -20,15 +20,15 @@ import org.typelevel.otel4s.trace.Tracer
 // Extract W3C trace context headers (traceparent, tracestate) from the GraphQL
 // `extensions` object so otel4s can re-parent spans on the client.
 extension (extensions: Option[GraphQLExtensions])
+
   private[routes] def traceCarrier: Map[String, String] =
     extensions.fold(Map.empty):
-      _.toMap
-        .collect { case (k, v) if v.isString => k -> v.asString.orEmpty }
-        .filter((_, v) => v.nonEmpty)
+      _.toIterable.flatMap((k, v) => v.asString.filter(_.nonEmpty).map(k -> _)).toMap
 
-// Only call it when we have a remote context; otherwise keep the current span context.
-private[routes] def joinRemote[F[_]: Tracer, A](carrier: Map[String, String])(fa: F[A]): F[A] =
-  if carrier.contains("traceparent") then Tracer[F].joinOrRoot(carrier)(fa) else fa
+// Only join a remote context when the client sent one. Otherwise keep the current span context.
+private[routes] def joinRemote[F[_]: {Tracer as T}, A](extensions: Option[GraphQLExtensions])(fa: F[A]): F[A] =
+  val carrier = extensions.traceCarrier
+  if carrier.contains("traceparent") then T.joinOrRoot(carrier)(fa) else fa
 
 def mkGraphqlError(p: Problem): GraphQLError =
   GraphQLError(
