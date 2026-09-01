@@ -51,7 +51,7 @@ object Routes {
   val KeepAliveDuration: FiniteDuration =
     5.seconds
 
-  def forService[F[_]: {Logger, Async, Tracer as T}](
+  def forService[F[_]: {Async, Logger as L, Tracer as T}](
     service:        Option[Authorization] => F[Option[GraphQLService[F]]],
     wsBuilder:      WebSocketBuilder2[F],
     graphQLPath:    String = "graphql",
@@ -81,7 +81,7 @@ object Routes {
     // every status. An unexpected error gives status 500 with a generic message and no data. The
     // cause goes to the log, not to the client.
     def internalErrorResponse(t: ResponseMediaType)(err: Throwable): F[Response[F]] =
-      Logger[F].error(err)("Internal error in GraphQL request handling.") *>
+      L.error(err)("Internal error in GraphQL request handling.") *>
         t.errorResponse[F](InternalServerError, "Internal server error.").pure[F]
 
     // Select the media type of the response. The specification requires status 406 when the
@@ -265,7 +265,7 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
             case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
             case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
             // Re-parent server spans on the remote context in `extensions`, as POST does.
-            case _ => execute(parsed, query)(p => joinRemote(exts.traceCarrier)(service.query(p, query, op)))
+            case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(p, query, op)))
           }
         }
       }
@@ -318,7 +318,7 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       (query, op, vars, ext) => {
         val parsed = service.parse(query, op, vars)
         rejectSubscription(parsed) {
-          execute(parsed, query)(p => joinRemote(ext.traceCarrier)(service.query(p, query, op)))
+          execute(parsed, query)(p => joinRemote(ext)(service.query(p, query, op)))
         }
       }
     )
