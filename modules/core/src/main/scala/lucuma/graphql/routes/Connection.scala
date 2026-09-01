@@ -62,12 +62,13 @@ object Connection {
   sealed trait ConnectionState[F[_]] {
 
     /**
-     * Initialize the connection with the given send reply function and subscriptions.
+     * Handles a `connection_init` message from the client. The protocol allows one such message
+     * per connection, so only the initial state accepts it.
      * @param send function to call in order to send a reply to the client
      * @param subs subscriptions being managed for this connection
      * @return state transition and action to execute
      */
-    def reset(
+    def init(
       service: GraphQLService[F],
       send: Reply => F[Unit],
       subs: Subscriptions[F]
@@ -114,7 +115,7 @@ object Connection {
 
     new ConnectionState[F] {
 
-      override def reset(
+      override def init(
         service: GraphQLService[F],
         send: Reply => F[Unit],
         subs: Subscriptions[F],
@@ -153,16 +154,13 @@ object Connection {
 
     new ConnectionState[F] {
 
-      override def reset(
+      // Only one `connection_init` per connection is allowed
+      override def init(
         service: GraphQLService[F],
         r: Reply => F[Unit],
         s: Subscriptions[F]
       ): (ConnectionState[F], F[Unit]) =
-        (connected(service, r, s),
-          subscriptions.removeAll  *>
-            r(Reply.Send(ConnectionAck())) *>
-            r(Reply.Send(FromServer.Ping()))
-        )
+        close(GraphQLWSError.TooManyInitializationRequests.some)
 
       override def start(id: String, raw: GraphQLRequest[JsonObject]): (ConnectionState[F], F[Option[GraphQLWSError]]) = {
         val document    = raw.query.value
@@ -222,7 +220,7 @@ object Connection {
       private def ignore[A](m: String)(a: A): (ConnectionState[F], F[A]) =
         (this, debug"Ignoring $m because the connection closed.".as(a))
 
-      override def reset(
+      override def init(
         service: GraphQLService[F],
         r: Reply => F[Unit],
         s: Subscriptions[F]
@@ -260,7 +258,7 @@ object Connection {
     (Ref.of(pendingInit[F](replyQueue)), Deferred[F, Unit]).flatMapN { (stateRef, initReceived) =>
 
       def handle[A](f: ConnectionState[F] => (ConnectionState[F], F[A])): F[A] =
-        stateRef.modify(f).flatten
+        stateRef.flatModify(f)
 
       /**
        * The timer for the `connection_init` message. If it expires, the connection is closed with code 4408. If the message arrives in time, the timer does nothing.
@@ -301,7 +299,7 @@ object Connection {
                 T.withCurrentSpanOrNoop:
                   _.addAttributes(svc.props*) >>
                     Subscriptions(supervisor, msg => reply(Reply.Send(msg)))
-                      .flatMap(s => handle(_.reset(svc, reply, s)))
+                      .flatMap(s => handle(_.init(svc, reply, s)))
 
               // User has insufficient privileges to connect.
               case None =>

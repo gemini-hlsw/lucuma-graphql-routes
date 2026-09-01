@@ -9,4 +9,4 @@ enum GraphQLWSError(val code: Int, val reason: String):
   case Forbidden(msg: String) extends GraphQLWSError(4403, s"Forbidden: $msg")
   case InitializationTimeout extends GraphQLWSError(4408, "Connection initialization timeout")
   case SubscriberAlreadyExists(id: String) extends GraphQLWSError(4409, s"Subscriber with id '$id' already exists")
-  case TooManyInitializationRequests extends GraphQLWSError(4429, "Too many initialization requests") // TODO Not implemented yet
+  case TooManyInitializationRequests extends GraphQLWSError(4429, "Too many initialization requests")
