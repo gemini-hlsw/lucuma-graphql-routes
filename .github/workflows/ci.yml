@@ -65,8 +65,8 @@ jobs:
         if: matrix.java == 'temurin@25' && matrix.os == 'ubuntu-22.04'
         run: sbt '++ ${{ matrix.scala }}' 'scalafixAll --check'
 
-      - name: Test
-        run: sbt '++ ${{ matrix.scala }}' test
+      - name: Test affected projects
+        run: sbt '++ ${{ matrix.scala }}' lucumaTestAffected
 
       - name: Check binary compatibility
         if: matrix.java == 'temurin@25' && matrix.os == 'ubuntu-22.04'
