@@ -2,7 +2,7 @@ import com.typesafe.tools.mima.core.*
 
 val catsEffectVersion          = "3.7.1"
 val circeVersion               = "0.14.16"
-val clueVersion                = "0.58.0"
+val clueVersion                = "0.58.2"
 val fs2Version                 = "3.12.0"
 val grackleVersion             = "0.30.0"
 val http4sVersion              = "0.23.36"
