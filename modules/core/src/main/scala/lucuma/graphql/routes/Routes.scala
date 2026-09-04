@@ -9,7 +9,6 @@ import cats.effect.*
 import cats.effect.std.Queue
 import cats.implicits.*
 import clue.model.StreamingMessage.FromClient
-import clue.model.StreamingMessage.FromServer
 import clue.model.json.given
 import fs2.Pipe
 import fs2.Stream
@@ -35,6 +34,8 @@ import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Close
+import org.http4s.websocket.WebSocketFrame.Ping
+import org.http4s.websocket.WebSocketFrame.Pong
 import org.http4s.websocket.WebSocketFrame.Text
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
@@ -48,19 +49,20 @@ import scala.concurrent.duration.*
 
 object Routes {
 
-  val KeepAliveDuration: FiniteDuration =
-    5.seconds
-
   def forService[F[_]: {Async, Logger as L, Tracer as T}](
     service:        Option[Authorization] => F[Option[GraphQLService[F]]],
     wsBuilder:      WebSocketBuilder2[F],
     graphQLPath:    String = "graphql",
     wsPath:         String = "ws",
     playgroundPath: String = "playground.html",
+    keepAlive:      FiniteDuration = WsRouteHandler.DefaultKeepAlive,
   ): HttpRoutes[F] = {
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
+
+    // The handler depends on the service alone, so one instance serves every socket.
+    val wsHandler = new WsRouteHandler(service, keepAlive)
 
     // The specification encodes the `variables` and the `extensions` parameters of a GET request
     // as a JSON object in a string.
@@ -133,7 +135,7 @@ object Routes {
       case req @ GET -> Root / `wsPath` =>
         T.span(s"GET /$wsPath").surround:
           debug"GET web socket: $req" *>
-          new WsRouteHandler(service).webSocketConnection(wsBuilder)
+          wsHandler.webSocketConnection(wsBuilder)
 
       // GraphQL Playground
       case req @ GET -> Root / `playgroundPath` =>
@@ -328,6 +330,18 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
 
 object WsRouteHandler {
 
+  /** The interval between two `ping` frames, and the limit for the `pong` reply of the client. */
+  val DefaultKeepAlive: FiniteDuration =
+    12.seconds
+
+  /** The `ping` frame of the heartbeat. It carries no payload, so all sockets share one instance. */
+  private[routes] val PingFrame: WebSocketFrame =
+    Ping()
+
+  /** The subprotocol of the socket, as the `Sec-WebSocket-Protocol` header of the handshake. */
+  private[routes] val SubprotocolHeaders: Headers =
+    Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws"))
+
   // The connection_init message payload has authorization information
   // which should not be logged.
   private val AuthRegEx    = """("Authorization":)\s*"[^"]*"""".r.unanchored
@@ -336,6 +350,10 @@ object WsRouteHandler {
   /** Replaces the value of the `Authorization` property of a client message with a marker. */
   private def redactAuth(s: String): String =
     AuthRegEx.replaceFirstIn(s, RedactedAuth)
+
+  /** Shortens a message for the log. */
+  private def trimmed(s: String): String =
+    if (s.length > 516) s"${s.take(512)} ..." else s
 
   // The protocol limits the reason of a close frame to 123 bytes of UTF-8.
   private val CloseReasonMaxBytes = 123
@@ -358,96 +376,145 @@ object WsRouteHandler {
 
 }
 
-class WsRouteHandler[F[_]: {Logger as L, Temporal, Tracer as T}](service: Option[Authorization] => F[Option[GraphQLService[F]]]) {
+class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
+  service:   Option[Authorization] => F[Option[GraphQLService[F]]],
+  keepAlive: FiniteDuration = WsRouteHandler.DefaultKeepAlive
+) {
+  import WsRouteHandler.PingFrame
+  import WsRouteHandler.SubprotocolHeaders
   import WsRouteHandler.closeReason
   import WsRouteHandler.redactAuth
+  import WsRouteHandler.trimmed
 
-  val KeepAliveDuration: FiniteDuration =
-    5.seconds
+  private def logWebSocketFrame(f: WebSocketFrame): F[Unit] =
+    f match {
+      case Text(s, last) => debug"Received Text frame (last=$last) from client: ${redactAuth(s)}"
+      case _             => debug"Received message from client: $f"
+    }
+
+  // The frame for a reply, and the log line that goes with it. The message is encoded once.
+  // `CloseWith` carries a code that the protocol reserves, so the close frame is well-formed.
+  // A code that http4s rejects produces no frame, and the end of the reply stream still closes
+  // the socket.
+  private val toFrames: Pipe[F, Reply, WebSocketFrame] =
+    _.evalMapFilter[F, WebSocketFrame] {
+      case Reply.Send(m)        =>
+        val s = m.asJson.noSpaces
+        debug"Sending to client: ${trimmed(s)}".as(Text(s).some)
+      case Reply.CloseWith(err) =>
+        warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
+          .as(Close(err.code, closeReason(err.reason)).orElse(Close(err.code)).toOption)
+      case Reply.End            =>
+        debug"Ending the reply stream - Closing connection".as(none)
+    }
+
+  // Sends one `ping` frame per interval, and closes the connection if no `pong` answers in time.
+  // The synchronous queue hands off each frame, so a slow client delays only its own interval.
+  // A socket that takes no frame at all is dead, so this completes `stalled` instead, to
+  // interrupt the stream from outside.
+  private[routes] def heartbeat(
+    close:        F[Unit],
+    stalled:      Deferred[F, Either[Throwable, Unit]],
+    pongReceived: Ref[F, Boolean]
+  ): Stream[F, WebSocketFrame] =
+    Stream.eval(Queue.synchronous[F, WebSocketFrame]).flatMap: frames =>
+      val handOff: F[Boolean] =
+        F.timeoutTo(
+          (debug"Sending a Ping frame" *> frames.offer(PingFrame)).as(true),
+          keepAlive,
+          warn"The socket took no Ping frame for a whole interval - aborting the connection" *>
+            close *> stalled.complete(().asRight).as(false)
+        )
+
+      def cycle: F[Unit] =
+        pongReceived.set(false) *> handOff.ifM(
+          F.sleep(keepAlive) *> pongReceived.get.ifM(
+            cycle,
+            warn"The client sent no Pong frame for a whole interval - closing the connection" *> close
+          ),
+          F.unit
+        )
+
+      Stream
+        .repeatEval(frames.take)
+        .concurrently(Stream.exec(F.sleep(keepAlive) *> cycle))
 
   def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = T.span("graphql.routes.webSocketConnection").surround {
 
-    // The keepalive Ping is a constant, so it is encoded once for the lifetime of the handler.
-    val pingFrame: WebSocketFrame =
-      Text(FromServer.Ping().asJson.noSpaces)
-
-    val keepAliveStream: Stream[F, Reply] =
-      Stream
-        .constant[F, Reply](Reply.Send(FromServer.Ping()))
-        .metered(KeepAliveDuration)
-
-    def logWebSocketFrame(f: WebSocketFrame): F[Unit] =
-      f match {
-        case Text(s, last) => debug"Received Text frame (last=$last) from client: ${redactAuth(s)}"
-        case _             => debug"Received message from client: $f"
-      }
-
-    def trimmed(s: String): String =
-      if (s.length > 516) s"${s.take(512)} ..." else s
-
-    // The frame for a reply, and the log line that goes with it. The message is encoded once.
-    // `CloseWith` carries a code that the protocol reserves, so the close frame is well-formed.
-    // A code that http4s rejects produces no frame, and the end of the reply stream still closes
-    // the socket.
-    val toFrames: Pipe[F, Reply, WebSocketFrame] =
-      _.evalMapFilter[F, WebSocketFrame] {
-        case Reply.Send(FromServer.Ping(None)) =>
-          debug"Sending Ping".as(pingFrame.some)
-        case Reply.Send(m)                     =>
-          val s = m.asJson.noSpaces
-          debug"Sending to client: ${trimmed(s)}".as(Text(s).some)
-        case Reply.CloseWith(err)              =>
-          warn"Sending error to client: ${err.code} ${err.reason} - Closing connection"
-            .as(Close(err.code, closeReason(err.reason)).orElse(Close(err.code)).toOption)
-        case Reply.End                         =>
-          debug"Ending the reply stream - Closing connection".as(none)
-      }
-
-    // Replies to the client. A terminal reply ends the stream, so `mergeHaltL` then stops the
-    // keepalive stream, and no Ping follows the close frame.
+    // Replies to the client. A terminal reply ends the stream, which closes the socket.
     def replies(replyQueue: Queue[F, Reply]): Stream[F, WebSocketFrame] =
       Stream
         .fromQueueUnterminated(replyQueue)
         .takeThrough(!_.isTerminal)
         .through(toFrames)
-        .mergeHaltL(keepAliveStream.through(toFrames))
 
-    // Input from the client. A frame that the server cannot handle closes the connection with the
-    // code that the protocol reserves for it. The close goes through the connection, so the state
-    // machine stops every subscription and ignores the messages that follow.
-    def receive(connection: Connection[F]): Pipe[F, WebSocketFrame, Nothing] =
+    // An invalid frame closes the connection with the reserved protocol code. The close goes
+    // through the connection, so the state machine stops every subscription and ignores later
+    // messages.
+    def handle(connection: Connection[F])(frame: WebSocketFrame): F[Unit] =
       def closeInvalid(detail: String): F[Unit] =
         connection.closeWith(GraphQLWSError.InvalidMessage(detail))
 
-      _.evalTap(logWebSocketFrame)
-        .evalMap {
-          case Text(s, _) =>
-            Either.catchNonFatal(parser.decode[FromClient](s)).flatten.fold(
-              e => closeInvalid(e.getMessage),
-              m => connection.receive(m)
-            )
+      frame match {
+        case Text(s, _) =>
+          Either.catchNonFatal(parser.decode[FromClient](s)).flatten.fold(
+            e => closeInvalid(e.getMessage),
+            m => connection.receive(m)
+          )
 
-          case Close(_)   =>
-            connection.close
+        case Close(_)   =>
+          connection.close
 
-          case f          =>
-            closeInvalid(s"expected a text frame, got ${f.getClass.getSimpleName}")
-        }
-        .drain
+        case f          =>
+          closeInvalid(s"expected a text frame, got ${f.getClass.getSimpleName}")
+      }
 
-    // The reply queue and the connection live inside the stream, so fs2 owns their lifetime. A
-    // build that never opens a socket leaks nothing, because the stream never runs.
-    // `mergeHaltBoth` ends the socket when either side ends, which closes the connection and
-    // cancels every subscription. An abrupt disconnect takes the same path.
+    // Input from the client. A `pong` frame sets the heartbeat flag. Every other frame goes on
+    // a queue, so slow work on one message does not delay the next `pong`, and one fiber keeps
+    // the message order.
+    def receive(connection: Connection[F], pongReceived: Ref[F, Boolean]): Pipe[F, WebSocketFrame, Nothing] =
+      in =>
+        Stream.eval(Queue.unbounded[F, WebSocketFrame]).flatMap: messages =>
+          in.evalTap(logWebSocketFrame)
+            .foreach {
+              // rfc6455 requires the reply to echo the payload of the `ping`, which is empty. A
+              // `pong` that the client sends on its own can carry any payload, and it proves
+              // nothing about the delivery of our `ping`, so it does not count.
+              case Pong(data) =>
+                pongReceived.set(true).whenA(data.isEmpty)
+
+              // http4s answers a `ping` frame of the client with a `pong` frame.
+              case Ping(_) =>
+                F.unit
+
+              case f       =>
+                messages.offer(f)
+            }
+            .concurrently(Stream.fromQueueUnterminated(messages).foreach(handle(connection)))
+
+    // The reply queue and the connection live inside the stream, so fs2 owns their lifetime and
+    // an unopened socket leaks nothing. `mergeHaltBoth` ends the socket when either side ends,
+    // which closes the connection and cancels every subscription. An abrupt disconnect takes the
+    // same path.
+    //
+    // The heartbeat merges with `mergeHaltL`, so a missed `pong` closes through the reply queue,
+    // and queued replies still reach the client first. A dead socket takes no frames, so it
+    // completes `stalled` instead, to interrupt the stream from outside.
     val sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame] = in =>
       for {
-        replyQueue <- Stream.eval(Queue.unbounded[F, Reply])
-        connection <- Stream.resource(Connection(service, replyQueue))
-        frame      <- replies(replyQueue).mergeHaltBoth(in.through(receive(connection)))
+        replyQueue   <- Stream.eval(Queue.unbounded[F, Reply])
+        pongReceived <- Stream.eval(Ref.of[F, Boolean](false))
+        stalled      <- Stream.eval(Deferred[F, Either[Throwable, Unit]])
+        connection   <- Stream.resource(Connection(service, replyQueue))
+        frame        <- replies(replyQueue)
+                          .mergeHaltL(heartbeat(connection.close, stalled, pongReceived))
+                          .mergeHaltBoth(in.through(receive(connection, pongReceived)))
+                          .interruptWhen(stalled)
       } yield frame
 
     wsb
-      .withHeaders(Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws")))
+      .withFilterPingPongs(false)
+      .withHeaders(SubprotocolHeaders)
       .build(sendReceive)
   }
 

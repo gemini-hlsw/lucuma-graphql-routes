@@ -18,6 +18,7 @@ import clue.http4s.Http4sHttpClient
 import clue.http4s.Http4sWebSocketBackend
 import clue.http4s.Http4sWebSocketClient
 import clue.websocket.WebSocketClient
+import com.comcast.ip4s.port
 import fs2.Stream
 import io.circe.Decoder
 import io.circe.Encoder
@@ -36,7 +37,6 @@ import org.http4s.jdkhttpclient.JdkWSClient
 import org.http4s.server.Server
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.{Uri as Http4sUri, *}
-import org.typelevel.ci.*
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.slf4j.Slf4jLogger
 import org.typelevel.otel4s.trace.Tracer
@@ -90,13 +90,18 @@ abstract class BaseSuite extends CatsEffectSuite:
   given Logger[IO] = BaseSuite.logger
   given Tracer[IO] = Tracer.noop[IO]
 
+  // The keepalive interval of the routes. A suite that exercises the heartbeat overrides it with
+  // a short interval, so that its tests run in milliseconds.
+  protected def keepAlive: FiniteDuration = WsRouteHandler.DefaultKeepAlive
+
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
-    Resource.pure(Routes.forService(service, _).orNotFound)
+    Resource.pure(Routes.forService(service, _, keepAlive = keepAlive).orNotFound)
 
   private def server: Resource[IO, Server] =
     httpApp.flatMap: app =>
       EmberServerBuilder
         .default[IO]
+        .withPort(port"0")
         .withHttpWebSocketApp(app)
         .withShutdownTimeout(Duration.Zero)
         .build
@@ -109,6 +114,10 @@ abstract class BaseSuite extends CatsEffectSuite:
 
   private def wsUri(svr: Server): Http4sUri =
     (svr.baseUri / "ws").copy(scheme = Http4sUri.Scheme.unsafeFromString("ws").some)
+
+  // A handshake request for the `/ws` endpoint, with the subprotocol that the server requires.
+  protected def wsRequest(svr: Server): WSRequest =
+    WSRequest(wsUri(svr)).withHeaders(WsRouteHandler.SubprotocolHeaders)
 
   protected def streamingClient(bearerToken: Option[String])(svr: Server): Resource[IO, WebSocketClient[IO, Nothing]] =
     val sbe = Http4sWebSocketBackend[IO](wsClientFixture())
@@ -132,10 +141,8 @@ abstract class BaseSuite extends CatsEffectSuite:
   // to send frames that a GraphQL client cannot send, such as a fragment or a message that is not
   // valid JSON.
   protected def rawWsFrames(count: Int)(frames: WSFrame*): IO[List[WSFrame]] =
-    val request = (svr: Server) =>
-      WSRequest(wsUri(svr)).withHeaders(Headers(Header.Raw(ci"Sec-WebSocket-Protocol", "graphql-transport-ws")))
     Resource.eval(IO(serverFixture()))
-      .flatMap(svr => wsClientFixture().connect(request(svr)))
+      .flatMap(svr => wsClientFixture().connect(wsRequest(svr)))
       // The client queues every frame that arrives, so a send before the read loses nothing.
       .use(conn => conn.sendMany(frames.toList) *> conn.receiveStream.take(count.toLong).compile.toList)
       .timeout(10.seconds)

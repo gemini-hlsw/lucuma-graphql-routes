@@ -181,8 +181,7 @@ object Connection {
 
       case Event.Initialized(service, subscriptions) =>
         (ConnectionState.Connected(service, subscriptions),
-         (send(Reply.Send(ConnectionAck())) *> send(Reply.Send(FromServer.Ping())))
-           .as(none[GraphQLWSError])
+         send(Reply.Send(ConnectionAck())).as(none[GraphQLWSError])
         )
 
       // A second `connection_init`, sent while the first lookup is still in flight.
