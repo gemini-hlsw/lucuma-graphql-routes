@@ -34,8 +34,6 @@ import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.http4s.websocket.WebSocketFrame.Close
-import org.http4s.websocket.WebSocketFrame.Ping
-import org.http4s.websocket.WebSocketFrame.Pong
 import org.http4s.websocket.WebSocketFrame.Text
 import org.typelevel.ci.CIString
 import org.typelevel.log4cats.Logger
@@ -334,10 +332,6 @@ object WsRouteHandler {
   val DefaultKeepAlive: FiniteDuration =
     12.seconds
 
-  /** The `ping` frame of the heartbeat. It carries no payload, so all sockets share one instance. */
-  private[routes] val PingFrame: WebSocketFrame =
-    Ping()
-
   /** The subprotocol of the socket, as the `Sec-WebSocket-Protocol` header of the handshake. */
   private[routes] val SubprotocolHeaders: Headers =
     Headers(Header.Raw(CIString("Sec-WebSocket-Protocol"), "graphql-transport-ws"))
@@ -380,7 +374,6 @@ class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
   service:   Option[Authorization] => F[Option[GraphQLService[F]]],
   keepAlive: FiniteDuration = WsRouteHandler.DefaultKeepAlive
 ) {
-  import WsRouteHandler.PingFrame
   import WsRouteHandler.SubprotocolHeaders
   import WsRouteHandler.closeReason
   import WsRouteHandler.redactAuth
@@ -407,37 +400,6 @@ class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
       case Reply.End            =>
         debug"Ending the reply stream - Closing connection".as(none)
     }
-
-  // Sends one `ping` frame per interval, and closes the connection if no `pong` answers in time.
-  // The synchronous queue hands off each frame, so a slow client delays only its own interval.
-  // A socket that takes no frame at all is dead, so this completes `stalled` instead, to
-  // interrupt the stream from outside.
-  private[routes] def heartbeat(
-    close:        F[Unit],
-    stalled:      Deferred[F, Either[Throwable, Unit]],
-    pongReceived: Ref[F, Boolean]
-  ): Stream[F, WebSocketFrame] =
-    Stream.eval(Queue.synchronous[F, WebSocketFrame]).flatMap: frames =>
-      val handOff: F[Boolean] =
-        F.timeoutTo(
-          (debug"Sending a Ping frame" *> frames.offer(PingFrame)).as(true),
-          keepAlive,
-          warn"The socket took no Ping frame for a whole interval - aborting the connection" *>
-            close *> stalled.complete(().asRight).as(false)
-        )
-
-      def cycle: F[Unit] =
-        pongReceived.set(false) *> handOff.ifM(
-          F.sleep(keepAlive) *> pongReceived.get.ifM(
-            cycle,
-            warn"The client sent no Pong frame for a whole interval - closing the connection" *> close
-          ),
-          F.unit
-        )
-
-      Stream
-        .repeatEval(frames.take)
-        .concurrently(Stream.exec(F.sleep(keepAlive) *> cycle))
 
   def webSocketConnection(wsb: WebSocketBuilder2[F]): F[Response[F]] = T.span("graphql.routes.webSocketConnection").surround {
 
@@ -469,51 +431,28 @@ class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
           closeInvalid(s"expected a text frame, got ${f.getClass.getSimpleName}")
       }
 
-    // Input from the client. A `pong` frame sets the heartbeat flag. Every other frame goes on
-    // a queue, so slow work on one message does not delay the next `pong`, and one fiber keeps
-    // the message order.
-    def receive(connection: Connection[F], pongReceived: Ref[F, Boolean]): Pipe[F, WebSocketFrame, Nothing] =
+    // Input from the client. Each frame goes on a queue, so slow work on one message does not
+    // delay the read of the next frame, and one fiber keeps the message order.
+    def receive(connection: Connection[F]): Pipe[F, WebSocketFrame, Nothing] =
       in =>
         Stream.eval(Queue.unbounded[F, WebSocketFrame]).flatMap: messages =>
           in.evalTap(logWebSocketFrame)
-            .foreach {
-              // rfc6455 requires the reply to echo the payload of the `ping`, which is empty. A
-              // `pong` that the client sends on its own can carry any payload, and it proves
-              // nothing about the delivery of our `ping`, so it does not count.
-              case Pong(data) =>
-                pongReceived.set(true).whenA(data.isEmpty)
-
-              // http4s answers a `ping` frame of the client with a `pong` frame.
-              case Ping(_) =>
-                F.unit
-
-              case f       =>
-                messages.offer(f)
-            }
+            .foreach(messages.offer)
             .concurrently(Stream.fromQueueUnterminated(messages).foreach(handle(connection)))
 
     // The reply queue and the connection live inside the stream, so fs2 owns their lifetime and
     // an unopened socket leaks nothing. `mergeHaltBoth` ends the socket when either side ends,
     // which closes the connection and cancels every subscription. An abrupt disconnect takes the
     // same path.
-    //
-    // The heartbeat merges with `mergeHaltL`, so a missed `pong` closes through the reply queue,
-    // and queued replies still reach the client first. A dead socket takes no frames, so it
-    // completes `stalled` instead, to interrupt the stream from outside.
     val sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame] = in =>
       for {
-        replyQueue   <- Stream.eval(Queue.unbounded[F, Reply])
-        pongReceived <- Stream.eval(Ref.of[F, Boolean](false))
-        stalled      <- Stream.eval(Deferred[F, Either[Throwable, Unit]])
-        connection   <- Stream.resource(Connection(service, replyQueue))
-        frame        <- replies(replyQueue)
-                          .mergeHaltL(heartbeat(connection.close, stalled, pongReceived))
-                          .mergeHaltBoth(in.through(receive(connection, pongReceived)))
-                          .interruptWhen(stalled)
+        replyQueue <- Stream.eval(Queue.unbounded[F, Reply])
+        connection <- Stream.resource(Connection(service, replyQueue))
+        frame      <- replies(replyQueue).mergeHaltBoth(in.through(receive(connection)))
       } yield frame
 
     wsb
-      .withFilterPingPongs(false)
+      .withHeartbeat(keepAlive)
       .withHeaders(SubprotocolHeaders)
       .build(sendReceive)
   }
