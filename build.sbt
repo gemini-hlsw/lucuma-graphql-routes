@@ -48,4 +48,7 @@ lazy val core = project
       "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
       "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
     ),
+    mimaBinaryIssueFilters ++= Seq(
+      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.WsRouteHandler.PingFrame"),
+    ),
   )
