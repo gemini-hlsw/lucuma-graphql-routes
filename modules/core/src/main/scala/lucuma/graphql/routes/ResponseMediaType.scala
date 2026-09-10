@@ -73,12 +73,10 @@ enum ResponseMediaType:
 object ResponseMediaType:
 
   /** The media type for a GraphQL response. */
-  val GraphQLResponseJson: MediaType =
-    new MediaType("application", "graphql-response+json", compressible = true, binary = false)
+  val GraphQLResponseJson: MediaType = MediaType.`application/graphql-response+json`
 
   /** The media type for a GraphQL request body, and for a response to a legacy client. */
-  val Json: MediaType =
-    MediaType.application.json
+  val Json: MediaType = MediaType.application.json
 
   /**
    * Status code 294, when the response has both a `data` entry and an `errors` entry.

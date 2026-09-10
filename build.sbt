@@ -50,5 +50,6 @@ lazy val core = project
     ),
     mimaBinaryIssueFilters ++= Seq(
       ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.WsRouteHandler.PingFrame"),
+      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.package#package.mkFromServer"),
     ),
   )

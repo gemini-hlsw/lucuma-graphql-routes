@@ -11,10 +11,12 @@ import grackle.syntax.*
 import io.circe.Json
 import io.circe.parser
 import org.http4s.*
+import org.http4s.MediaType.`application/graphql-response+json`
+import org.http4s.MediaType.application
+import org.http4s.headers.Accept
 import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
-import org.typelevel.ci.*
 
 // Mapping used by RequestErrorSuite. These tests never reach execution, so one query field is
 // enough.
@@ -29,14 +31,10 @@ object RequestErrorMapping extends CirceMapping[IO]:
     )
   )
 
-// Tests the responses to a request that the server cannot process. Each response must carry a
-// well-formed GraphQL response body with the GraphQL media type (findings 14 and 20).
 class RequestErrorSuite extends BaseSuite:
 
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
     GraphQLService(RequestErrorMapping).some.pure[IO]
-
-  private val GraphQLJson = "application/graphql-response+json"
 
   // The status, the headers and the parsed body of the response to the given request.
   private def response(mkRequest: Uri => Request[IO]): IO[(Status, Headers, Json)] =
@@ -56,8 +54,8 @@ class RequestErrorSuite extends BaseSuite:
   // Assert that the response carries the GraphQL media type and a non-empty `errors` list, and
   // that it carries no `data` entry.
   private def assertErrorBody(headers: Headers, body: Json): Unit =
-    val contentType = headers.get(ci"Content-Type").map(_.head.value)
-    assert(contentType.exists(_.startsWith(GraphQLJson)), s"Got: $contentType")
+    val contentType = headers.get[`Content-Type`].map(_.mediaType)
+    assertEquals(contentType, `application/graphql-response+json`.some)
     val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
     assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
     assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
@@ -142,7 +140,7 @@ class RequestErrorSuite extends BaseSuite:
 
   test("a legacy client also gets 405 and the GraphQL media type on an error"):
     response: uri =>
-      Request[IO](Method.PUT, uri).putHeaders(Header.Raw(ci"Accept", "application/json"))
+      Request[IO](Method.PUT, uri).putHeaders(Accept(application.json))
     .map: (status, headers, body) =>
       assertEquals(status, Status.MethodNotAllowed)
       assertErrorBody(headers, body)

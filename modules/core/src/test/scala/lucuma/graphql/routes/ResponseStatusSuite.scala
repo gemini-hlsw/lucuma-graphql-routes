@@ -13,9 +13,12 @@ import grackle.syntax.*
 import io.circe.Json
 import io.circe.parser
 import org.http4s.*
+import org.http4s.MediaType.`application/graphql-response+json`
+import org.http4s.MediaType.application
 import org.http4s.circe.*
+import org.http4s.headers.Accept
 import org.http4s.headers.Authorization
-import org.typelevel.ci.*
+import org.http4s.headers.`Content-Type`
 
 // Mapping used by ResponseStatusSuite. Each field gives one kind of result:
 //   ping         - a plain success
@@ -57,7 +60,6 @@ object ResponseStatusMapping extends CirceMapping[IO]:
     )
   )
 
-// Tests the status codes of the GraphQL over HTTP specification (finding 16).
 class ResponseStatusSuite extends BaseSuite:
 
   def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
@@ -65,15 +67,15 @@ class ResponseStatusSuite extends BaseSuite:
 
   // A request without an `Accept` header counts as a legacy client, which never gets status 294.
   // These tests are about the status of a modern client, so they ask for the GraphQL media type.
-  private val AcceptGraphQL = Header.Raw(ci"Accept", "application/graphql-response+json")
+  private val AcceptGraphQL = Accept(`application/graphql-response+json`)
 
   // A legacy client asks for `application/json`, so it never gets status 294.
-  private val AcceptJson = Header.Raw(ci"Accept", "application/json")
+  private val AcceptJson = Accept(application.json)
 
   private def post(
     query:         String,
     operationName: Option[String] = None,
-    accept:        Header.Raw = AcceptGraphQL
+    accept:        Accept = AcceptGraphQL
   ): IO[(Status, Json)] =
     rawResponse: uri =>
       val fields = List("query" -> Json.fromString(query)) ++
@@ -142,8 +144,8 @@ class ResponseStatusSuite extends BaseSuite:
       assertEquals(status, Status.Ok)
       assert(hasData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
-      val contentType = headers.get(ci"Content-Type").map(_.head.value)
-      assert(contentType.exists(_.startsWith("application/json")), s"Got: $contentType")
+      val contentType = headers.get[`Content-Type`].map(_.mediaType)
+      assertEquals(contentType, application.json.some)
 
   test("a request without an Accept header gets 200 for a response with data and errors"):
     rawResponse: uri =>
@@ -152,8 +154,8 @@ class ResponseStatusSuite extends BaseSuite:
     .map: (status, headers, text) =>
       assertEquals(status, Status.Ok)
       assert(hasErrors(parser.parse(text).getOrElse(Json.Null)))
-      val contentType = headers.get(ci"Content-Type").map(_.head.value)
-      assert(contentType.exists(_.startsWith("application/json")), s"Got: $contentType")
+      val contentType = headers.get[`Content-Type`].map(_.mediaType)
+      assertEquals(contentType, application.json.some)
 
   // An effect handler failure aborts execution, so grackle returns a `Result.Failure` with no
   // data. The error comes from execution, so the specification treats it as a field error: the
@@ -192,8 +194,8 @@ class ResponseStatusSuite extends BaseSuite:
       assert(hasErrors(body), text)
       assert(!hasData(body), text)
       assert(!text.contains("secret internal detail"), text)
-      val contentType = headers.get(ci"Content-Type").map(_.head.value)
-      assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+      val contentType = headers.get[`Content-Type`].map(_.mediaType)
+      assertEquals(contentType, `application/graphql-response+json`.some)
 
   test("an exception raised by an effect handler returns 500 with a GraphQL error body"):
     post("query { effectThrow }").map: (status, body) =>

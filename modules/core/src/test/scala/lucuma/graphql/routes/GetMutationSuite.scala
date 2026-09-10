@@ -13,9 +13,10 @@ import io.circe.Encoder
 import io.circe.Json
 import io.circe.parser
 import org.http4s.*
+import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
-import org.typelevel.ci.*
+import org.http4s.headers.`Content-Type`
 
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -99,8 +100,8 @@ class GetMutationSuite extends BaseSuite:
   test("GET a mutation response carries a GraphQL errors body"):
     rawResponse(uri => Request[IO](Method.GET, uri.withQueryParam("query", mutationDoc)))
       .map { (_, headers, text) =>
-        val contentType = headers.get(ci"Content-Type").map(_.head.value)
-        assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+        val contentType = headers.get[`Content-Type`].map(_.mediaType)
+        assertEquals(contentType, `application/graphql-response+json`.some)
         val body   = parser.parse(text).getOrElse(Json.Null)
         val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
         assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")

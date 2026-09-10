@@ -123,7 +123,7 @@ object Subscriptions {
           errorSent: Ref[F, Boolean],
           removeOwn: F[Boolean]
         ): Pipe[F, Result[Json], Unit] =
-          _.evalMap(mkFromServer(_, id))
+          _.map(mkFromServer(_, id))
             .takeThrough(_.isRight)
             .evalMap {
               case Left(e)  => (send(e) *> errorSent.set(true) *> removeOwn.void).uncancelable
