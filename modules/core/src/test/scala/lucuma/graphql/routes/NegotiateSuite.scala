@@ -6,21 +6,22 @@ package lucuma.graphql.routes
 import cats.implicits.*
 import munit.FunSuite
 import org.http4s.Charset
-import org.http4s.Header
 import org.http4s.Headers
+import org.http4s.MediaType.`application/graphql-response+json`
+import org.http4s.MediaType.application
 import org.http4s.Status
-import org.typelevel.ci.*
+import org.http4s.headers.Accept
 
 // Tests `ResponseMediaType.negotiate` and the media type of a response without an HTTP server.
 class NegotiateSuite extends FunSuite:
 
-  private val GraphQLJson = "application/graphql-response+json"
-  private val LegacyJson  = "application/json"
+  private val GraphQLJson = `application/graphql-response+json`.show
+  private val LegacyJson  = application.json.show
 
   private def negotiate(accept: String*): Either[String, ResponseMediaType] =
-    ResponseMediaType.negotiateOrError(Headers(accept.map(a => Header.Raw(ci"Accept", a))*))
+    ResponseMediaType.negotiateOrError(Headers(accept.flatMap(a => Accept.parse(a).toSeq)))
 
-  private def message(accept: String*): String =
+  private def message(accept: String*)(using munit.Location): String =
     negotiate(accept*).swap.getOrElse(fail(s"Expected no acceptable media type for ${accept.toList}"))
 
   // --- the server selects a media type ----------------------------------------

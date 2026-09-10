@@ -3,7 +3,6 @@
 
 package lucuma.graphql.routes
 
-import cats.MonadThrow
 import cats.data.Ior
 import cats.data.NonEmptyChain
 import cats.data.NonEmptyList
@@ -44,10 +43,10 @@ def mkGraphqlErrors(problems: NonEmptyChain[Problem]): GraphQLErrors =
 def mkGraphqlErrors(error: Throwable): GraphQLErrors =
   NonEmptyList.one(mkGraphqlError(Problem(s"Internal Error: ${error.getMessage}")))
 
-def mkFromServer[F[_]: MonadThrow](r: Result[Json], id: String): F[Either[FromServer.Error, FromServer.Next]] =
+def mkFromServer(r: Result[Json], id: String): Either[FromServer.Error, FromServer.Next] =
   r match {
-    case Success(json)      => FromServer.Next(id, GraphQLResponse(json.rightIor)).asRight.pure[F]
-    case Warning(ps, json)  => FromServer.Next(id, GraphQLResponse(Ior.both(mkGraphqlErrors(ps), json))).asRight.pure[F]
-    case Failure(ps)        => FromServer.Error(id, mkGraphqlErrors(ps)).asLeft.pure[F]
-    case InternalError(err) => FromServer.Error(id, mkGraphqlErrors(err)).asLeft.pure[F]
+    case Success(json)      => FromServer.Next(id, GraphQLResponse(json.rightIor)).asRight
+    case Warning(ps, json)  => FromServer.Next(id, GraphQLResponse(Ior.both(mkGraphqlErrors(ps), json))).asRight
+    case Failure(ps)        => FromServer.Error(id, mkGraphqlErrors(ps)).asLeft
+    case InternalError(err) => FromServer.Error(id, mkGraphqlErrors(err)).asLeft
   }

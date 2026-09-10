@@ -13,7 +13,6 @@ import io.circe.parser
 import org.http4s.*
 import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
-import org.typelevel.ci.*
 
 object PostContentTypeMapping extends CirceMapping[IO]:
   val schema = schema"""
@@ -38,7 +37,7 @@ class PostContentTypeSuite extends BaseSuite:
   private def post(contentType: Option[String]): IO[(Status, Json)] =
     rawResponse: uri =>
       val req = Request[IO](Method.POST, uri).withEntity(body)
-      contentType.fold(req.removeHeader[`Content-Type`])(ct => req.putHeaders(Header.Raw(ci"Content-Type", ct)))
+      contentType.fold(req.removeHeader[`Content-Type`])(ct => req.putHeaders(`Content-Type`.parse(ct)))
     .map((status, _, text) => (status, parser.parse(text).getOrElse(Json.Null)))
 
   // --- supported content types --------------------------------------------------

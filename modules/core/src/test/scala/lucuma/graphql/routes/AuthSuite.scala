@@ -15,12 +15,13 @@ import io.circe.literal.*
 import io.circe.parser
 import org.http4s.AuthScheme
 import org.http4s.Credentials
+import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.Method
 import org.http4s.Request
 import org.http4s.Status
 import org.http4s.circe.*
 import org.http4s.headers.Authorization
-import org.typelevel.ci.*
+import org.http4s.headers.`Content-Type`
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
@@ -82,8 +83,8 @@ class AuthSuite extends BaseSuite:
     rawResponse(uri => Request[IO](Method.POST, uri).withEntity(json"""{"query": "query { foo }"}"""))
       .map: (status, headers, body) =>
         assertEquals(status, Status.Forbidden)
-        val contentType = headers.get(ci"Content-Type").map(_.head.value)
-        assert(contentType.exists(_.startsWith("application/graphql-response+json")), s"Got: $contentType")
+        val contentType = headers.get[`Content-Type`].map(_.mediaType)
+        assertEquals(contentType, `application/graphql-response+json`.some)
         val errors = parser.parse(body).toOption.flatMap(_.hcursor.downField("errors").as[List[Json]].toOption)
         assertEquals(errors.map(_.size), Some(1), body)
 
