@@ -15,7 +15,6 @@ import io.circe.parser
 import org.http4s.*
 import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.headers.Allow
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -61,8 +60,8 @@ object GetMutationMapping extends CirceMapping[IO]:
 // Tests that GET requests correctly reject mutations and still allow queries.
 class GetMutationSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(GetMutationMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(GetMutationMapping)
 
   // Issue a real HTTP GET to the /graphql endpoint, bypassing the FetchClient
   // (which always POSTs). Returns the response status and the Allow header, if

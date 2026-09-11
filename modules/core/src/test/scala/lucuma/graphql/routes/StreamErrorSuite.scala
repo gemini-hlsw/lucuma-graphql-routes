@@ -12,7 +12,6 @@ import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
 import io.circe.literal.*
-import org.http4s.headers.Authorization
 
 object StreamErrorMapping extends CirceMapping[IO]:
   val schema = schema"""
@@ -35,8 +34,8 @@ object StreamErrorMapping extends CirceMapping[IO]:
 
 class StreamErrorSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(StreamErrorMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(StreamErrorMapping)
 
   test("stream error: client receives partial results then an error message"):
     for

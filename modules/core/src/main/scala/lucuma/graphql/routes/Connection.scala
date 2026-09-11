@@ -20,6 +20,7 @@ import clue.model.StreamingMessage.FromClient.*
 import clue.model.StreamingMessage.FromServer.*
 import fs2.Stream
 import grackle.Operation
+import grackle.QueryCompiler.IntrospectionLevel
 import grackle.Result
 import grackle.Result.*
 import io.circe.Json
@@ -28,7 +29,6 @@ import org.http4s.ParseResult
 import org.http4s.headers.Authorization
 import org.typelevel.log4cats.Logger
 import org.typelevel.log4cats.syntax.*
-import org.typelevel.otel4s.Attribute
 import org.typelevel.otel4s.trace.Tracer
 
 import scala.concurrent.duration.*
@@ -84,7 +84,11 @@ object Connection {
     /**
      * Post-initialization state. It lasts until the client or the server closes the connection.
      */
-    case Connected(service: GraphQLService[F], subscriptions: Subscriptions[F])
+    case Connected(
+      service:       GraphQLService[F],
+      context:       RequestContext,
+      subscriptions: Subscriptions[F]
+    )
 
     /**
      * Final state. The connection put its last reply on the queue, so it ignores every event that
@@ -102,7 +106,11 @@ object Connection {
     case InitRequested(connectionProps: Option[JsonObject])
 
     /** The service lookup finished and the service authorized the client. */
-    case Initialized(service: GraphQLService[F], subscriptions: Subscriptions[F])
+    case Initialized(
+      service:       GraphQLService[F],
+      context:       RequestContext,
+      subscriptions: Subscriptions[F]
+    )
 
     /** A `subscribe` message. It starts a GraphQL operation with a client-provided id. */
     case Start(id: String, request: GraphQLRequest[JsonObject])
@@ -150,7 +158,7 @@ object Connection {
         (ConnectionState.Initializing(), F.unit >> authorize(connectionProps))
 
       // The lookup runs in `Initializing`, so no lookup can have finished yet.
-      case Event.Initialized(_, _) =>
+      case Event.Initialized(_, _, _) =>
         close(GraphQLWSError.TooManyInitializationRequests.some)
 
       case Event.Start(id, _) =>
@@ -179,8 +187,8 @@ object Connection {
 
     event match {
 
-      case Event.Initialized(service, subscriptions) =>
-        (ConnectionState.Connected(service, subscriptions),
+      case Event.Initialized(service, context, subscriptions) =>
+        (ConnectionState.Connected(service, context, subscriptions),
          send(Reply.Send(ConnectionAck())).as(none[GraphQLWSError])
         )
 
@@ -207,6 +215,7 @@ object Connection {
   private def handleConnected[F[_]: {MonadThrow as F, Tracer}](
     send:  Reply => F[Unit],
     poll:  Poll[F],
+    level: IntrospectionLevel,
     state: ConnectionState.Connected[F],
     event: Event[F]
   ): Transition[F] = {
@@ -219,11 +228,11 @@ object Connection {
 
       // A second `connection_init`. A second `Initialized` cannot happen, because `Initializing`
       // closes the connection before a second lookup starts.
-      case Event.InitRequested(_) | Event.Initialized(_, _) =>
+      case Event.InitRequested(_) | Event.Initialized(_, _, _) =>
         close(GraphQLWSError.TooManyInitializationRequests.some)
 
       case Event.Start(id, request) =>
-        (state, startOperation(send, state, id, request))
+        (state, startOperation(send, level, state, id, request))
 
       case Event.Stop(id) =>
         state.staying(poll(state.subscriptions.remove(id)))
@@ -248,11 +257,11 @@ object Connection {
 
     event match {
 
-      case Event.InitRequested(_)  => ignore("connection_init")
-      case Event.Initialized(_, _) => ignore("connection_init result")
-      case Event.Start(id, _)      => ignore(s"subscribe($id)")
-      case Event.Stop(id)          => ignore(s"complete($id)")
-      case Event.InitTimedOut()    => ignore("connection_init timeout")
+      case Event.InitRequested(_)     => ignore("connection_init")
+      case Event.Initialized(_, _, _) => ignore("connection_init result")
+      case Event.Start(id, _)         => ignore(s"subscribe($id)")
+      case Event.Stop(id)             => ignore(s"complete($id)")
+      case Event.InitTimedOut()       => ignore("connection_init timeout")
 
       // A double close is normal, because the client and the server can both close it. It is silent.
       case Event.Close(_) => state.staying(F.unit)
@@ -271,6 +280,7 @@ object Connection {
    */
   private def startOperation[F[_]: {MonadThrow as F, Tracer as T}](
     send:    Reply => F[Unit],
+    level:   IntrospectionLevel,
     state:   ConnectionState.Connected[F],
     id:      String,
     request: GraphQLRequest[JsonObject]
@@ -281,27 +291,30 @@ object Connection {
       val service  = state.service
       val document = request.query.value
       val name     = request.operationName
+      val ctx      = state.context
 
       // A subscription is its own event stream. A query or a mutation is a one-element stream.
       def events(op: Operation): Stream[F, Result[Json]] =
-        if (service.isSubscription(op)) service.subscribe(op, document, name)
-        else Stream.eval(service.query(op, document, name))
+        if (service.isSubscription(op)) service.subscribe(ctx, op, document, name)
+        else Stream.eval(service.query(ctx, op, document, name))
 
-      // The span of every client operation carries the id of the operation and the service props.
+      // The span of every client operation carries the id of the operation and the context's attributes.
       def add(op: Operation): F[Option[GraphQLWSError]] =
         T.withCurrentSpanOrNoop: span =>
-          span.addAttributes(service.props :+ Attribute("connection.fromclient.id", id)*) >>
+          span.addAttributes(ctx.attributes.added("connection.fromclient.id", id)) >>
             state.subscriptions
               .add(id, events(op))
               .map: added =>
                 Option.unless(added)(GraphQLWSError.SubscriberAlreadyExists(id))
 
       val action: F[Option[GraphQLWSError]] =
-        service.parse(document, name, request.variables) match {
+        service.parse(ctx, document, name, request.variables, level) match {
           case Success(op)        => add(op)
           case Warning(_, op)     => add(op) // n.b. warnings on start are lost
-          case Failure(ps)        => send(Reply.Send(Error(id, mkGraphqlErrors(ps)))).as(none[GraphQLWSError])
-          case InternalError(err) => send(Reply.Send(Error(id, mkGraphqlErrors(err)))).as(none[GraphQLWSError])
+          case Failure(ps)        =>
+            send(Reply.Send(Error(id, mkGraphqlErrors(ps)))).as(none[GraphQLWSError])
+          case InternalError(err) =>
+            send(Reply.Send(Error(id, mkGraphqlErrors(err)))).as(none[GraphQLWSError])
         }
 
       // Re-parent server spans on the client's remote context, if `extensions` carries one.
@@ -312,15 +325,15 @@ object Connection {
   val ConnectionInitWaitTimeout: FiniteDuration = 10.seconds
 
   def apply[F[_]: {Temporal, Logger, Tracer as T}](
-    service:    Option[Authorization] => F[Option[GraphQLService[F]]],
+    resolver:   AuthResolver[F],
     replyQueue: Queue[F, Reply]
   ): Resource[F, Connection[F]] =
     Supervisor[F].flatMap(supervisor =>
-      Resource.make(build(service, replyQueue, supervisor))(_.close)
+      Resource.make(build(resolver, replyQueue, supervisor))(_.close)
     )
 
   private def build[F[_]: {Temporal as F, Logger, Tracer as T}](
-    service:    Option[Authorization] => F[Option[GraphQLService[F]]],
+    resolver:   AuthResolver[F],
     replyQueue: Queue[F, Reply],
     supervisor: Supervisor[F]
   ): F[Connection[F]] = {
@@ -342,10 +355,12 @@ object Connection {
         stateRef
           .flatModifyFull { (poll, state) =>
             state match {
-              case ConnectionState.PendingInit()       => handlePendingInit(reply, cp => poll(authorize(cp)), event)
-              case s @ ConnectionState.Initializing()  => handleInitializing(reply, s, event)
-              case s @ ConnectionState.Connected(_, _) => handleConnected(reply, poll, s, event)
-              case s @ ConnectionState.Closed()        => handleClosed(s, event)
+              case ConnectionState.PendingInit()          =>
+                handlePendingInit(reply, cp => poll(authorize(cp)), event)
+              case s @ ConnectionState.Initializing()     => handleInitializing(reply, s, event)
+              case s @ ConnectionState.Connected(_, _, _) =>
+                handleConnected(reply, poll, resolver.config.introspection, s, event)
+              case s @ ConnectionState.Closed()           => handleClosed(s, event)
             }
           }
           .flatMap(_.traverse_(err => handle(Event.Close(err.some))))
@@ -363,29 +378,31 @@ object Connection {
        * the user lookup for the authentication data, and the creation of the Subscriptions object.
        * A successful lookup fires `Initialized`, which moves the machine to `Connected`.
        *
-       * @param connectionProps properties extracted from the `connection_init` payload
-       * @return the error that must close the connection, if any
+       * @param connectionProps
+       *   properties extracted from the `connection_init` payload
+       * @return
+       *   the error that must close the connection, if any
        */
       def authorize(connectionProps: Option[JsonObject]): F[Option[GraphQLWSError]] =
         T.span("connection.init").surround {
 
-          // Given an optional Authorization, get a service and start a subscription (if allowed)
+          // Resolve the authorization and start a subscription
           def trySubscribe(opAuth: Option[Authorization]): F[Option[GraphQLWSError]] =
-            service(opAuth).flatMap {
+            resolver
+              .resolve(opAuth)
+              .flatMap:
 
-              // User is authorized. Go.
-              case Some(svc) =>
-                T.withCurrentSpanOrNoop:
-                  _.addAttributes(svc.props*) >>
-                    Subscriptions(supervisor, msg => reply(Reply.Send(msg)))
-                      .flatMap(s => handle(Event.Initialized(svc, s)))
-                      .as(none[GraphQLWSError])
+                // The client can run operations. Move to `Connected`.
+                case Right((svc, ctx)) =>
+                  T.withCurrentSpanOrNoop:
+                    _.addAttributes(ctx.attributes) >>
+                      Subscriptions(supervisor, msg => reply(Reply.Send(msg)))
+                        .flatMap(s => handle(Event.Initialized(svc, ctx, s)))
+                        .as(none[GraphQLWSError])
 
-              // User has insufficient privileges to connect.
-              case None =>
-                GraphQLWSError.Forbidden("Insufficient privileges").some.pure[F]
-
-            }
+                // The routes turn the client away. The protocol reserves 4403 for this.
+                case Left(message) =>
+                  GraphQLWSError.Forbidden(message).some.pure[F]
 
           // Either subscribe or error out, based on the Authorization property (if any)
           connectionProps.flatMap(parseAuthorization) match {

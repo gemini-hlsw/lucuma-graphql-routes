@@ -4,18 +4,16 @@
 package lucuma.graphql.routes
 
 import cats.effect.*
-import cats.implicits.*
 import io.circe.Json
 import io.circe.literal.*
 import io.circe.parser
 import org.http4s.*
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 class PostParameterSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(RequestErrorMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(RequestErrorMapping)
 
   private def post(text: String): IO[(Status, Json)] =
     rawResponse: uri =>
