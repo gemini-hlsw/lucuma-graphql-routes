@@ -16,7 +16,7 @@ val otel4sVersion              = "1.1.0"
 enablePlugins(NoPublishPlugin)
 
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
-ThisBuild / tlBaseVersion       := "0.15"
+ThisBuild / tlBaseVersion       := "0.16"
 ThisBuild / scalaVersion        := "3.9.0"
 ThisBuild / crossScalaVersions  := Seq("3.9.0")
 
@@ -47,9 +47,5 @@ lazy val core = project
       "org.typelevel" %% "grackle-circe"               % grackleVersion             % Test,
       "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
       "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
-    ),
-    mimaBinaryIssueFilters ++= Seq(
-      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.WsRouteHandler.PingFrame"),
-      ProblemFilters.exclude[DirectMissingMethodProblem]("lucuma.graphql.routes.package#package.mkFromServer"),
     ),
   )

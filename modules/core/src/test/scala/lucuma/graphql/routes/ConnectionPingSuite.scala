@@ -25,9 +25,9 @@ final class ConnectionPingSuite extends CatsEffectSuite:
   given Logger[IO] = BaseSuite.logger
   given Tracer[IO] = Tracer.noop[IO]
 
-  /** A connection whose service always refuses, so that no test needs a schema. */
+  /** A connection with a real service. Ping and pong tests do not exercise the schema. */
   private val connection: Resource[IO, (Connection[IO], Queue[IO, Reply])] =
-    BaseSuite.connectionResource(_ => IO.none)
+    BaseSuite.connectionResource(GraphQLService.unvalidated(TestMapping))
 
   test("A Ping before ConnectionInit gets a Pong reply"):
     connection.use: (conn, queue) =>

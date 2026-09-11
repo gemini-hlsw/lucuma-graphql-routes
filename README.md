@@ -3,32 +3,42 @@
 This provides GraphQL routing via http (queries/mutations only), and via the Atom-based WebSocket protocol (all). This project will probably become a part of the [Clue](https://github.com/gemini-hlsw/clue) project, which provides a GraphQL client for the above protocols.
 
 ```scala
-libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes-sangria" % <version> // Sangria
-libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes-grackle" % <version> // Grackle
+libraryDependencies += "edu.gemini" %% "lucuma-graphql-routes" % <version>
 ```
 
-The `HttpRoutes` provided by this library will delegate GraphQL operation to a `GraphQLService` which is computed on a per-request basis. This allows the application to select a different schema based on credentials in the request, for example.
+The `HttpRoutes` that this library builds run one `GraphQLService` for the life of the server. An `Authenticator` turns the credentials of a request into an `Auth` result. Build the service once, build the authenticator, and pass both to `Routes.forService`.
 
-So first, write a method that constructs a `GraphQLService` based on the incoming `Authorization` header (if any).
+A service with no authentication:
 
 ```scala
-def mkService(auth: Option[Authorization]): F[Option[GraphQLService[F]]] =
-  // Yield None to deny access (403 Forbidden), or a GraphQLService if it's
-  // ok to service the request.
+for
+  service <- GraphQLService[F](myMapping)
+yield (wsb: WebSocketBuilder2[F]) => Routes.forOpenService(service, wsb)
 ```
 
-There are two constructors for `GraphQLService`, depending on the back end you're using.
+A service that authenticates with a bearer token, and that lets an anonymous client read the schema:
 
 ```scala
-new SangriaGraphQLService[F](mySchema, userData, exceptionHandler) // Sangria
-new GrackleGraphQLService[F](myMapping) // Grackle
+val authenticator: Authenticator[F] =
+  Authenticator.fromOptionF(_.flatTraverse(ssoClient.get).map(_.map(u => RequestContext(Env("user" -> u)))))
+
+for
+  service <- GraphQLService[F](myMapping)
+  auth    <- authenticator.cached(5.minutes)
+yield (wsb: WebSocketBuilder2[F]) => Routes.forService(service, auth, wsb)
 ```
 
-Next construct the `HttpRoutes`, passing the method defined above.
+If the client sends no token, the routes serve the schema and refuse every other request. Set `RoutesConfig.anonymous` to change this policy.
+
+A mapping reads the user of the request out of the env:
 
 ```scala
-Routes.forService(mkService) // HttpRoutes[F]
+override val selectElaborator = SelectElaborator:
+  case (QueryType, "programs", Nil) =>
+    Elab.envE[User]("user").flatMap(user => Elab.transformChild(filterForUser(user)))
 ```
+
+Put the user in the env of the `RequestContext` that the authenticator returns. The routes pass that env to `compiler.compile` and to `interpreter.run`.
 
 The resulting `HttpRoutes` will serve the following endpoints:
 
@@ -37,6 +47,24 @@ The resulting `HttpRoutes` will serve the following endpoints:
 - `Root / "playground.html"` serving the [GraphQL Playground](https://github.com/graphql/graphql-playground) HTML application.
 
 The `"graphql"`, `"ws"`, and `"playground.html"` segments are defaults; you can specify different values when you call `Routes.forService`.
+
+## Migration from 0.15
+
+`Routes.forService` no longer takes a function that builds a `GraphQLService` for each request. It
+takes one service, which you build once, and an `Authenticator`.
+
+| 0.15                                                                  | 0.16                                                                                       |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `service: Option[Authorization] => F[Option[GraphQLService[F]]]`      | `service: GraphQLService[F]` and `authenticator: Authenticator[F]`                         |
+| `GraphQLService(mapping, props*)`                                     | `GraphQLService[F](mapping)`, which gives `F[GraphQLService[F]]` and validates the mapping |
+| A `None` result, which gave status 403                                | `Auth.Denied(message)`, or `Auth.Anonymous` with `AnonymousPolicy.Deny`                    |
+| Your own introspection-only mapping for a client with no credentials  | `AnonymousPolicy.IntrospectionOnly`, which is the default                                  |
+| The `props` parameter of `GraphQLService`                             | `RequestContext.attributes`                                                                |
+| `graphQLPath`, `wsPath`, `playgroundPath`, and `keepAlive` parameters | the fields of `RoutesConfig`                                                               |
+
+A mapping that took the user as a constructor parameter now reads it from the env that the routes
+pass to `compile` and to `interpreter.run`. Put the user in the env of the `RequestContext` that
+your authenticator returns.
 
 ## Tracing
 

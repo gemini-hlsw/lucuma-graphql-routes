@@ -44,7 +44,9 @@ final class ConnectionInitTimeoutSuite extends ConnectionSuite:
       assert(!obt.contains(ack), s"a late connection_init was acknowledged, got $obt")
 
   test("slow authorization after a timely connection_init does not cause a 4408 close"):
-    val slow = IO.sleep(Connection.ConnectionInitWaitTimeout * 2) *> testService
+    val slow =
+      Authenticator[IO]: _ =>
+        IO.sleep(Connection.ConnectionInitWaitTimeout * 2) *> Authenticator.open[IO].authenticate(none)
     rawRepliesOf(Connection.ConnectionInitWaitTimeout * 3, slow)(_.receive(init)).map: obt =>
       assert(!obt.contains(timeoutClose), s"slow authorization was reported as a 4408, got $obt")
       assert(obt.contains(ack), s"the connection was not acknowledged, got $obt")

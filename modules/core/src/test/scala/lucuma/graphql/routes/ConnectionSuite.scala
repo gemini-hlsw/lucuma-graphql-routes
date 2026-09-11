@@ -35,19 +35,19 @@ abstract class ConnectionSuite extends CatsEffectSuite:
   protected def complete(id: String): FromClient = FromClient.Complete(id)
 
   /** The service that the connection authorizes against. */
-  protected val testService: IO[Option[GraphQLService[IO]]] =
-    GraphQLService(TestMapping).some.pure[IO]
+  protected val testService: GraphQLService[IO] =
+    GraphQLService.unvalidated(TestMapping)
 
   // Runs the script against a connection that received no `connection_init` message, then returns
   // every reply that the connection made, after the given settle time. Use this to test the
   // handshake itself. For everything else, use `repliesOf`.
   protected def rawRepliesOf(
-    settle:  FiniteDuration,
-    service: IO[Option[GraphQLService[IO]]] = testService
+    settle:        FiniteDuration,
+    authenticator: Authenticator[IO] = Authenticator.open[IO]
   )(script: Connection[IO] => IO[Unit]): IO[List[Reply]] =
     TestControl.executeEmbed:
       BaseSuite
-        .connectionResource(_ => service)
+        .connectionResource(testService, authenticator)
         .use: (conn, queue) =>
           script(conn) *>
             IO.sleep(settle) *>

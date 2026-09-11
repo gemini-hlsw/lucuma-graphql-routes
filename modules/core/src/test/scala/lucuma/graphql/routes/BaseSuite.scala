@@ -65,11 +65,13 @@ object BaseSuite:
   // An in-process connection and its reply queue. There is no socket and no server, so a test
   // can send client messages to the connection and read the replies straight off the queue.
   def connectionResource(
-    service: Option[Authorization] => IO[Option[GraphQLService[IO]]]
+    service:       GraphQLService[IO],
+    authenticator: Authenticator[IO] = Authenticator.open[IO],
+    config:        RoutesConfig = RoutesConfig.Default
   )(using Logger[IO], Tracer[IO]): Resource[IO, (Connection[IO], Queue[IO, Reply])] =
     for
       queue <- Resource.eval(Queue.unbounded[IO, Reply])
-      conn  <- Connection[IO](service, queue)
+      conn  <- Connection[IO](new AuthResolver(service, authenticator, config), queue)
     yield (conn, queue)
 
   // a runtime that is constructed the same as global, but lets us see unhandled errors (above)
@@ -83,19 +85,21 @@ abstract class BaseSuite extends CatsEffectSuite:
   import BaseSuite.ClientOption
 
   /* Subclasses must implement. */
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]]
+  def graphQLService: GraphQLService[IO]
+
+  /* Subclasses override this when they test authentication. */
+  def authenticator: Authenticator[IO] = Authenticator.open[IO]
+
+  /* Subclasses override this when they test a policy, a path, or the keepalive interval. */
+  def routesConfig: RoutesConfig = RoutesConfig.Default
 
   override lazy val munitIoRuntime: IORuntime = BaseSuite.runtime
 
   given Logger[IO] = BaseSuite.logger
   given Tracer[IO] = Tracer.noop[IO]
 
-  // The keepalive interval of the routes. A suite that exercises the heartbeat overrides it with
-  // a short interval, so that its tests run in milliseconds.
-  protected def keepAlive: FiniteDuration = WsRouteHandler.DefaultKeepAlive
-
   private def httpApp: Resource[IO, WebSocketBuilder2[IO] => HttpApp[IO]] =
-    Resource.pure(Routes.forService(service, _, keepAlive = keepAlive).orNotFound)
+    Resource.pure(Routes.forService(graphQLService, authenticator, _, routesConfig).orNotFound)
 
   private def server: Resource[IO, Server] =
     httpApp.flatMap: app =>
