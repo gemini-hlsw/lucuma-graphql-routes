@@ -13,8 +13,6 @@ val munitVersion               = "1.3.6"
 val munitCatsEffectVersion     = "2.2.1"
 val otel4sVersion              = "1.1.0"
 
-enablePlugins(NoPublishPlugin)
-
 ThisBuild / tlVersionIntroduced := Map("3" -> "0.3.3")
 ThisBuild / tlBaseVersion       := "0.16"
 ThisBuild / scalaVersion        := "3.9.0"
@@ -23,6 +21,11 @@ ThisBuild / crossScalaVersions  := Seq("3.9.0")
 // Tests work fine in parallel but the output get interleaved, which can be confusing.
 // It's fast so there's no harm doing them sequentially here.
 ThisBuild / Test / parallelExecution := false
+
+lazy val root = project
+  .in(file("."))
+  .enablePlugins(NoPublishPlugin)
+  .aggregate(core)
 
 lazy val core = project
   .in(file("modules/core"))
