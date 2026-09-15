@@ -15,7 +15,6 @@ import org.http4s.MediaType.application
 import org.http4s.MediaType.text
 import org.http4s.circe.*
 import org.http4s.headers.Accept
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 // Mapping used by ResponseMediaTypeSuite. A single query field is enough, because these tests
@@ -33,8 +32,8 @@ object ResponseMediaTypeMapping extends CirceMapping[IO]:
 
 class ResponseMediaTypeSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(ResponseMediaTypeMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(ResponseMediaTypeMapping)
 
   private val GraphQLJson = "application/graphql-response+json"
   private val LegacyJson  = "application/json"

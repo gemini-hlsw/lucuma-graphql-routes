@@ -7,6 +7,7 @@ import cats.effect.*
 import cats.implicits.*
 import grackle.Cursor
 import grackle.Query
+import grackle.QueryCompiler.IntrospectionLevel
 import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
@@ -17,7 +18,6 @@ import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.MediaType.application
 import org.http4s.circe.*
 import org.http4s.headers.Accept
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 // Mapping used by ResponseStatusSuite. Each field gives one kind of result:
@@ -62,8 +62,8 @@ object ResponseStatusMapping extends CirceMapping[IO]:
 
 class ResponseStatusSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(ResponseStatusMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(ResponseStatusMapping)
 
   // A request without an `Accept` header counts as a legacy client, which never gets status 294.
   // These tests are about the status of a modern client, so they ask for the GraphQL media type.
@@ -249,7 +249,7 @@ class ResponseStatusSuite extends BaseSuite:
   // execution failure the value `null`. The specification forbids a 2xx status for a response
   // without a `data` entry.
   test("a result without a value returns 422"):
-    new HttpRouteHandler(GraphQLService(ResponseStatusMapping), ResponseMediaType.GraphQL)
+    new HttpRouteHandler(GraphQLService.unvalidated(ResponseStatusMapping), RequestContext.empty, IntrospectionLevel.Full, ResponseMediaType.GraphQL)
       .toResponse(Result.failure[Json]("boom"))
       .map(resp => assertEquals(resp.status, Status.UnprocessableContent))
 

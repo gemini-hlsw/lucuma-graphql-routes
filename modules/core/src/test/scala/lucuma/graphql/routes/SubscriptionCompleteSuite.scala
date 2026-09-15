@@ -8,7 +8,6 @@ import cats.implicits.*
 import io.circe.Json
 import io.circe.JsonObject
 import io.circe.literal.*
-import org.http4s.headers.Authorization
 
 import scala.concurrent.duration.*
 
@@ -17,8 +16,8 @@ import scala.concurrent.duration.*
 
 class SubscriptionCompleteSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(TestMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(TestMapping)
 
   // TestMapping's Subscription.echo emits exactly 3 results and then ends.
   private val echoQuery: String    = """subscription($abc: String) { echo(s: $abc) }"""

@@ -6,7 +6,6 @@ package lucuma.graphql.routes
 import cats.effect.IO
 import cats.syntax.all.*
 import org.http4s.client.websocket.WSFrame
-import org.http4s.headers.Authorization
 import scodec.bits.ByteVector
 
 /**
@@ -15,8 +14,8 @@ import scodec.bits.ByteVector
  */
 final class InvalidMessageSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(TestMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(TestMapping)
 
   // The close code of the last frame, if the server closed the socket.
   private def closeCodeOf(frames: List[WSFrame]): Option[Int] =

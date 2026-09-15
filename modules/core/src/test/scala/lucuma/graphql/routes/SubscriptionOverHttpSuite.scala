@@ -15,7 +15,6 @@ import org.http4s.Method
 import org.http4s.Request
 import org.http4s.Status
 import org.http4s.circe.*
-import org.http4s.headers.Authorization
 
 import scala.concurrent.duration.*
 
@@ -58,8 +57,8 @@ object SubscriptionHttpMapping extends CirceMapping[IO]:
 
 class SubscriptionOverHttpSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(SubscriptionHttpMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(SubscriptionHttpMapping)
 
   // Send a raw HTTP request to /graphql and return (status-code, parsed JSON body).
   private def rawRequest(query: String, method: Method): IO[(Status, Json)] =

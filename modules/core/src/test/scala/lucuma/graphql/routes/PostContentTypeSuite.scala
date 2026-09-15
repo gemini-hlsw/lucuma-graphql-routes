@@ -11,7 +11,6 @@ import grackle.syntax.*
 import io.circe.Json
 import io.circe.parser
 import org.http4s.*
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 object PostContentTypeMapping extends CirceMapping[IO]:
@@ -27,8 +26,8 @@ object PostContentTypeMapping extends CirceMapping[IO]:
 
 class PostContentTypeSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(PostContentTypeMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(PostContentTypeMapping)
 
   private val body = """{"query":"query { ping }"}"""
 

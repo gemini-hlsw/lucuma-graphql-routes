@@ -4,17 +4,15 @@
 package lucuma.graphql.routes
 
 import cats.effect.*
-import cats.implicits.*
 import io.circe.Json
 import io.circe.literal.*
 import io.circe.parser
 import org.http4s.*
-import org.http4s.headers.Authorization
 
 class GetExtensionsSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(RequestErrorMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(RequestErrorMapping)
 
   private def get(params: (String, String)*): IO[(Status, Json)] =
     rawResponse(uri => Request[IO](Method.GET, params.foldLeft(uri)((u, p) => u.withQueryParam(p._1, p._2))))

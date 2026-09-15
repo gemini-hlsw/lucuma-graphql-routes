@@ -11,7 +11,9 @@ import fs2.Stream
 import grackle.Mapping
 import grackle.Operation
 import grackle.Problem
+import grackle.QueryCompiler.IntrospectionLevel
 import grackle.Result
+import grackle.ValidationFailure.Severity
 import io.circe.Json
 import io.circe.JsonObject
 import org.typelevel.otel4s.Attribute
@@ -20,12 +22,8 @@ import org.typelevel.otel4s.semconv.experimental.attributes.GraphqlExperimentalA
 import org.typelevel.otel4s.trace.SpanKind
 import org.typelevel.otel4s.trace.Tracer
 
-/**
-  * @param props trace properties to be added to root traces (init, subscribe, execute).
-  */
 class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
-  val mapping: Mapping[F],
-  val props:   Attribute[?]*
+  val mapping: Mapping[F]
 )(using Compiler[F, F]) {
 
   def isSubscription(op: Operation): Boolean =
@@ -34,8 +32,22 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def isMutation(op: Operation): Boolean =
     mapping.schema.mutationType.exists(_ =:= op.rootTpe)
 
-  def parse(query: String, op: Option[String], vars: Option[JsonObject]): Result[Operation] =
-    mapping.compiler.compile(query, op, vars.map(_.toJson), reportUnused = false)
+  /** Compiles a document. `ctx.env` reaches every elaborator, and `level` gates introspection. */
+  def parse(
+    ctx:   RequestContext,
+    query: String,
+    op:    Option[String],
+    vars:  Option[JsonObject],
+    level: IntrospectionLevel = IntrospectionLevel.Full
+  ): Result[Operation] =
+    mapping.compiler.compile(
+      query,
+      op,
+      vars.map(_.toJson),
+      introspectionLevel = level,
+      reportUnused       = false,
+      env                = ctx.env
+    )
 
   /**
    * True if the GraphQL document parses. The HTTP routes use this to tell a syntax error, which
@@ -53,6 +65,7 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   // OTEL attributes for a GraphQL operation; see
   // https://opentelemetry.io/docs/specs/semconv/graphql/graphql-spans/
   private def graphqlAttributes(
+    ctx:           RequestContext,
     op:            Operation,
     document:      String,
     operationName: Option[String]
@@ -66,21 +79,22 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
       (List(
         Attribute(GraphqlDocument, truncateDocument(document)),
         Attribute(GraphqlOperationType, opType),
-      ) ++ operationName.map(Attribute(GraphqlOperationName, _)) ++ props)*
-    )
+      ) ++ operationName.map(Attribute(GraphqlOperationName, _)))*
+    ) ++ ctx.attributes
   }
 
   def query(
+    ctx:           RequestContext,
     op:            Operation,
     document:      String,
     operationName: Option[String] = None
   ): F[Result[Json]] =
     T.spanBuilder("graphql")
-      .withSpanKind(SpanKind.Server) // it is assumed we run this on the serevr
-      .addAttributes(graphqlAttributes(op, document, operationName))
+      .withSpanKind(SpanKind.Server)
+      .addAttributes(graphqlAttributes(ctx, op, document, operationName))
       .build
       .surround:
-        runInterpreter(op).compile.toList.map {
+        runInterpreter(ctx, op).compile.toList.map {
           case List(e) => e
           case other   =>
             Result.internalError(
@@ -89,17 +103,42 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
         }
 
   def subscribe(
+    ctx:           RequestContext,
     op:            Operation,
     document:      String,
     operationName: Option[String] = None
   ): Stream[F, Result[Json]] =
     // Decorate the current span with GraphQL semantic attributes.
     Stream.exec(
-      T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(op, document, operationName)))
-    ) ++ runInterpreter(op)
+      T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(ctx, op, document, operationName)))
+    ) ++ runInterpreter(ctx, op)
 
-  private def runInterpreter(op: Operation): Stream[F, Result[Json]] =
-    mapping.interpreter.run(op.query, op.rootTpe, grackle.Env.EmptyEnv)
+  private def runInterpreter(ctx: RequestContext, op: Operation): Stream[F, Result[Json]] =
+    mapping.interpreter.run(op.query, op.rootTpe, ctx.env)
+
+}
+
+object GraphQLService {
+
+  /**
+   * Builds a service and validates its mapping. It raises `ValidationException` in F when the
+   * mapping has a failure of `severity` or greater.
+   */
+  def apply[F[_]: {MonadThrow, Tracer}](
+    mapping:  Mapping[F],
+    severity: Severity = Severity.Warning
+  )(using Compiler[F, F]): F[GraphQLService[F]] =
+    mapping.validateInto[F](severity) *>
+      MonadThrow[F].catchNonFatal(mapping.compiler).as(new GraphQLService[F](mapping))
+
+  /**
+   * Builds a service and does not validate its mapping. Use it when the caller already validated
+   * the mapping on its own terms.
+   */
+  def unvalidated[F[_]: {MonadThrow, Tracer}](
+    mapping: Mapping[F]
+  )(using Compiler[F, F]): GraphQLService[F] =
+    new GraphQLService[F](mapping)
 
 }
 

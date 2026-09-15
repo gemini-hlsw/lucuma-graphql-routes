@@ -13,6 +13,7 @@ import clue.model.json.given
 import fs2.Pipe
 import fs2.Stream
 import grackle.Operation
+import grackle.QueryCompiler.IntrospectionLevel
 import grackle.Result
 import io.circe.*
 import io.circe.syntax.*
@@ -48,19 +49,36 @@ import scala.concurrent.duration.*
 object Routes {
 
   def forService[F[_]: {Async, Logger as L, Tracer as T}](
-    service:        Option[Authorization] => F[Option[GraphQLService[F]]],
-    wsBuilder:      WebSocketBuilder2[F],
-    graphQLPath:    String = "graphql",
-    wsPath:         String = "ws",
-    playgroundPath: String = "playground.html",
-    keepAlive:      FiniteDuration = WsRouteHandler.DefaultKeepAlive,
+    service:       GraphQLService[F],
+    authenticator: Authenticator[F],
+    wsBuilder:     WebSocketBuilder2[F],
+    config:        RoutesConfig = RoutesConfig.Default
   ): HttpRoutes[F] = {
 
     val dsl = new Http4sDsl[F]{}
     import dsl._
 
-    // The handler depends on the service alone, so one instance serves every socket.
-    val wsHandler = new WsRouteHandler(service, keepAlive)
+    val graphQLPath    = config.graphQLPath
+    val wsPath         = config.wsPath
+    val playgroundPath = config.playgroundPath
+
+    val resolver = new AuthResolver[F](service, authenticator, config)
+
+    // Warn (once) for misconfiguration of AnonymousPolicy and IntrospectionLevel.
+    val warnOnce: F[Unit] =
+      if config.anonymous == AnonymousPolicy.IntrospectionOnly && (config.introspection == IntrospectionLevel.Disabled || config.introspection == IntrospectionLevel.TypenameOnly) then
+        val warned = Ref.unsafe[F, Boolean](false)
+        warned.getAndSet(true).flatMap(
+          L.warn(
+            "Anonymous clients are limited to introspection, but introspection is disabled. " +
+            "Every anonymous request will be refused. Set RoutesConfig.anonymous to Deny or Allow, " +
+            "or set RoutesConfig.introspection to Full."
+          ).unlessA
+        )
+      else Async[F].unit
+
+    // The handler depends on the resolver alone, so one instance serves every socket.
+    val wsHandler = new WsRouteHandler(resolver, config.keepAlive)
 
     // The specification encodes the `variables` and the `extensions` parameters of a GET request
     // as a JSON object in a string.
@@ -95,10 +113,10 @@ object Routes {
 
     // Select the response media type, then build a handler for the authorized service.
     def withHandler(req: Request[F])(use: HttpRouteHandler[F] => F[Response[F]]): F[Response[F]] =
-      negotiated(req): t =>
-        service(req.headers.get[Authorization]).flatMap {
-          case Some(s) => use(new HttpRouteHandler(s, t))
-          case None    => t.errorResponse[F](Forbidden, "Access denied.").pure[F]
+      warnOnce *> negotiated(req): t =>
+        resolver.resolve(req.headers.get[Authorization]).flatMap {
+          case Right((s, ctx)) => use(new HttpRouteHandler(s, ctx, config.introspection, t))
+          case Left(message)   => t.errorResponse[F](Forbidden, message).pure[F]
         }
 
     def playground(rootPath: Path): F[Response[F]] =
@@ -133,7 +151,7 @@ object Routes {
       case req @ GET -> Root / `wsPath` =>
         T.span(s"GET /$wsPath").surround:
           debug"GET web socket: $req" *>
-          wsHandler.webSocketConnection(wsBuilder)
+          warnOnce *> wsHandler.webSocketConnection(wsBuilder)
 
       // GraphQL Playground
       case req @ GET -> Root / `playgroundPath` =>
@@ -154,10 +172,22 @@ object Routes {
     }
   }
 
+  /**
+   * Routes for a service with no authentication.
+   */
+  def forOpenService[F[_]: {Async, Logger, Tracer}](
+    service:   GraphQLService[F],
+    wsBuilder: WebSocketBuilder2[F],
+    config:    RoutesConfig = RoutesConfig.Default
+  ): HttpRoutes[F] =
+    forService(service, Authenticator.open[F], wsBuilder, config)
+
 }
 
 class HttpRouteHandler[F[_]: {Temporal, Tracer}](
   service:      GraphQLService[F],
+  context:      RequestContext,
+  level:        IntrospectionLevel,
   acceptedType: ResponseMediaType
 ) {
 
@@ -258,14 +288,14 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       // the errors of both parameters.
       errors => errorResponse(UnprocessableContent, errors.map(_.sanitized)),
       (vars, exts) => {
-        val parsed = service.parse(query, op, vars)
+        val parsed = service.parse(context, query, op, vars, level)
         rejectSubscription(parsed) {
           parsed match {
             // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
             case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
             case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
             // Re-parent server spans on the remote context in `extensions`, as POST does.
-            case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(p, query, op)))
+            case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(context, p, query, op)))
           }
         }
       }
@@ -316,9 +346,9 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
     request.fold(
       messages => errorResponse(UnprocessableContent, messages),
       (query, op, vars, ext) => {
-        val parsed = service.parse(query, op, vars)
+        val parsed = service.parse(context, query, op, vars, level)
         rejectSubscription(parsed) {
-          execute(parsed, query)(p => joinRemote(ext)(service.query(p, query, op)))
+          execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
         }
       }
     )
@@ -371,7 +401,7 @@ object WsRouteHandler {
 }
 
 class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
-  service:   Option[Authorization] => F[Option[GraphQLService[F]]],
+  resolver:  AuthResolver[F],
   keepAlive: FiniteDuration = WsRouteHandler.DefaultKeepAlive
 ) {
   import WsRouteHandler.SubprotocolHeaders
@@ -447,7 +477,7 @@ class WsRouteHandler[F[_]: {Temporal as F, Logger as L, Tracer as T}](
     val sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame] = in =>
       for {
         replyQueue <- Stream.eval(Queue.unbounded[F, Reply])
-        connection <- Stream.resource(Connection(service, replyQueue))
+        connection <- Stream.resource(Connection(resolver, replyQueue))
         frame      <- replies(replyQueue).mergeHaltBoth(in.through(receive(connection)))
       } yield frame
 

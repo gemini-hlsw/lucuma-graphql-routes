@@ -7,7 +7,6 @@ import cats.effect.*
 import cats.implicits.*
 import io.circe.Json
 import io.circe.literal.*
-import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
@@ -15,8 +14,8 @@ import BaseSuite.ClientOption.*
 // This suite tests that variables make it through.
 
 class VariablesSuite extends BaseSuite:
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(TestMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(TestMapping)
 
   def testQuery(option: ClientOption): IO[Unit] =
     expect(

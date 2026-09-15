@@ -7,6 +7,7 @@ import cats.effect.*
 import cats.implicits.*
 import clue.RemoteInitializationException
 import fs2.Stream
+import grackle.Env
 import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
@@ -48,10 +49,13 @@ object AuthMapping extends CirceMapping[IO]:
 
 class AuthSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    auth match
-      case Some(Authorization(Credentials.Token(AuthScheme.Bearer, "bob"))) => IO(GraphQLService(AuthMapping).some)
-      case _ => none.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(AuthMapping)
+
+  override def authenticator: Authenticator[IO] =
+    Authenticator[IO]:
+      case Some(Authorization(Credentials.Token(AuthScheme.Bearer, "bob"))) => IO.pure(Auth(Env("user" -> "bob")))
+      case _                                                                => IO.pure(Auth.Denied("Access denied."))
 
   def testQuery(bearerToken: Option[String], option: ClientOption): IO[Unit] =
     expect(

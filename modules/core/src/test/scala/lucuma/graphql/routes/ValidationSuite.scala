@@ -4,12 +4,10 @@
 package lucuma.graphql.routes
 
 import cats.effect.*
-import cats.implicits.*
 import clue.ResponseException
 import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
-import org.http4s.headers.Authorization
 
 import BaseSuite.ClientOption
 import BaseSuite.ClientOption.*
@@ -25,8 +23,8 @@ object ValidationMapping extends CirceMapping[IO]:
 
 class ValidationSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(ValidationMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(ValidationMapping)
 
   def testQuery(option: ClientOption): IO[Unit] =
     expect(

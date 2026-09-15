@@ -15,7 +15,6 @@ import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.MediaType.application
 import org.http4s.headers.Accept
 import org.http4s.headers.Allow
-import org.http4s.headers.Authorization
 import org.http4s.headers.`Content-Type`
 
 // Mapping used by RequestErrorSuite. These tests never reach execution, so one query field is
@@ -33,8 +32,8 @@ object RequestErrorMapping extends CirceMapping[IO]:
 
 class RequestErrorSuite extends BaseSuite:
 
-  def service(auth: Option[Authorization]): IO[Option[GraphQLService[IO]]] =
-    GraphQLService(RequestErrorMapping).some.pure[IO]
+  val graphQLService: GraphQLService[IO] =
+    GraphQLService.unvalidated(RequestErrorMapping)
 
   // The status, the headers and the parsed body of the response to the given request.
   private def response(mkRequest: Uri => Request[IO]): IO[(Status, Headers, Json)] =
