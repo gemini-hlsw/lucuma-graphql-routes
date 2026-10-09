@@ -19,10 +19,7 @@ import scala.concurrent.duration.*
 final class OperationCancelSuite extends ConnectionSuite:
 
   private def slowQuery(id: String): FromClient =
-    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"query { slow }"}}""")
-
-  private def subscribe(id: String): FromClient =
-    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"subscription { ticks }"}}""")
+    subscribe(id, "query { slow }")
 
   // The settle time gives every started operation time to finish.
   private def replies(ms: FromClient*): IO[List[Reply]] =
@@ -35,10 +32,6 @@ final class OperationCancelSuite extends ConnectionSuite:
   private def isPong(r: Reply): Boolean = r match
     case Reply.Send(FromServer.Pong(_)) => true
     case _                              => false
-
-  private def isError(id: String)(r: Reply): Boolean = r match
-    case Reply.Send(FromServer.Error(`id`, _)) => true
-    case _                                     => false
 
   private def countComplete(id: String)(rs: List[Reply]): Int =
     rs.count(_ == Reply.Send(FromServer.Complete(id)))
@@ -84,7 +77,7 @@ final class OperationCancelSuite extends ConnectionSuite:
   test("a client complete for an id that was never used is ignored"):
     replies(complete("99")).map: obt =>
       assertEquals(countComplete("99")(obt), 0, s"expected no complete for id 99, got $obt")
-      assert(!obt.exists(isError("99")), s"the unknown id produced an error, got $obt")
+      assert(!obt.exists(hasId("99")), s"the unknown id produced a message, got $obt")
       assert(!obt.exists(_.isTerminal), s"the unknown id closed the socket, got $obt")
 
   // --- a duplicate id, close code 4409 ----------------------------------------------

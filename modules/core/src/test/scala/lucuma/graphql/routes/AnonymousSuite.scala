@@ -4,22 +4,17 @@
 package lucuma.graphql.routes
 
 import cats.effect.IO
-import cats.implicits.*
 import grackle.Env
 import grackle.Result
-import io.circe.Json
 import io.circe.literal.*
-import io.circe.parser
 import org.http4s.AuthScheme
 import org.http4s.Credentials
-import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.Method
 import org.http4s.Request
 import org.http4s.Status
 import org.http4s.circe.*
 import org.http4s.client.websocket.WSFrame
 import org.http4s.headers.Authorization
-import org.http4s.headers.`Content-Type`
 
 // What the routes do with a client that sends no credentials, a rejected token, or an accepted
 // token. `RequestContextSuite` covers the context of an accepted client.
@@ -63,16 +58,14 @@ class AnonymousSuite extends BaseSuite:
   // The 403 response carries a well-formed GraphQL response with the GraphQL media type, so the
   // client reads the body and reports the errors in it.
   test("[http] A rejected token gives 403 with the GraphQL media type and an errors body."):
-    rawResponse: uri =>
+    jsonResponse: uri =>
       Request[IO](Method.POST, uri)
         .withEntity(json"""{"query": "query { echo(s: \"hi\") }"}""")
         .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, "steve")))
     .map: (status, headers, body) =>
       assertEquals(status, Status.Forbidden)
-      val contentType = headers.get[`Content-Type`].map(_.mediaType)
-      assertEquals(contentType, `application/graphql-response+json`.some)
-      val errors = parser.parse(body).toOption.flatMap(_.hcursor.downField("errors").as[List[Json]].toOption)
-      assertEquals(errors.map(_.size), Some(1), body)
+      assertErrorBody(headers, body)
+      assertEquals(errorsOf(body).size, 1, body.spaces2)
 
   test("[ws] A rejected token closes with code 4403 and the message of the refusal."):
     rawWsFrames(1)(
