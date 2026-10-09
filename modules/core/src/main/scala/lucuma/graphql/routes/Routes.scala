@@ -23,14 +23,17 @@ import org.http4s.HttpRoutes
 import org.http4s.MediaType
 import org.http4s.Method
 import org.http4s.ParseFailure
+import org.http4s.QValue
 import org.http4s.QueryParamDecoder
 import org.http4s.Request
 import org.http4s.Response
 import org.http4s.Status
 import org.http4s.circe.*
 import org.http4s.dsl.Http4sDsl
+import org.http4s.headers.Accept
 import org.http4s.headers.Allow
 import org.http4s.headers.Authorization
+import org.http4s.headers.Upgrade
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
@@ -58,9 +61,9 @@ object Routes {
     val dsl = new Http4sDsl[F]{}
     import dsl._
 
-    val graphQLPath    = config.graphQLPath
-    val wsPath         = config.wsPath
-    val playgroundPath = config.playgroundPath
+    val GraphQLPath    = RoutePath(config.graphQLPath)
+    val WsPath         = RoutePath(config.wsPath)
+    val PlaygroundPath = RoutePath(config.playgroundPath)
 
     val resolver = new AuthResolver[F](service, authenticator, config)
 
@@ -120,48 +123,75 @@ object Routes {
         }
 
     def playground(rootPath: Path): F[Response[F]] =
-      Ok(Playground((rootPath / graphQLPath).toString, (rootPath / wsPath).toString)).map(_.withContentType(`Content-Type`(MediaType.text.html)))
+      Ok(Playground(rootPath.concat(GraphQLPath.path).toString, rootPath.concat(WsPath.path).toString)).map(_.withContentType(`Content-Type`(MediaType.text.html)))
+
+    val playgroundShared = PlaygroundPath == GraphQLPath || PlaygroundPath == WsPath
+    val wsShared         = WsPath == GraphQLPath || WsPath == PlaygroundPath
+
+    // The response to a GET request on the GraphQL path depends on the `Accept` header, so a
+    // cache must not give it to a client that sends a different `Accept` header.
+    val varyAccept = Header.Raw(CIString("Vary"), "Accept")
+
+    // A browser prefers `text/html` to the GraphQL media types. A wildcard does not count as
+    // `text/html`, so a GraphQL client that sends `*/*` still reaches the GraphQL routes.
+    def prefersHtml(req: Request[F]): Boolean =
+      req.headers.get[Accept].exists: accept =>
+        val html    = accept.values.filter(e => MediaType.text.html.satisfiedBy(e.mediaRange)).map(_.qValue).maximumOption.filter(_ > QValue.Zero)
+        val graphQL = List(ResponseMediaType.GraphQLResponseJson, ResponseMediaType.Json).flatMap(ResponseMediaType.priority(accept, _)).maximumOption
+        html.exists(h => graphQL.forall(h > _))
+
+    // A WebSocket handshake asks for the `websocket` protocol in the `Upgrade` header.
+    val websocketProtocol = CIString("websocket")
+    def isWebSocketUpgrade(req: Request[F]): Boolean =
+      req.headers.get[Upgrade].exists(_.values.exists(_.name == websocketProtocol))
+
+    // On a shared path, the span name tells a page load or a handshake from a GraphQL request.
+    val playgroundSpan = if playgroundShared then s"GET $PlaygroundPath (playground)" else s"GET $PlaygroundPath"
+    val wsSpan         = if wsShared then s"GET $WsPath (websocket)" else s"GET $WsPath"
 
     HttpRoutes.of[F] {
 
+      // WebSocket connection request. On a shared path, only a handshake comes here. This route
+      // comes first, so a handshake always gets the socket.
+      case req @ GET -> WsPath() if !wsShared || isWebSocketUpgrade(req) =>
+        T.span(wsSpan).surround:
+          debug"GET web socket: $req" *>
+          warnOnce *> wsHandler.webSocketConnection(wsBuilder)
+
+      // GraphQL Playground. On a shared path, only a browser comes here. The root path is the
+      // path of the request without the segments of the playground path.
+      case req @ GET -> PlaygroundPath() if !playgroundShared || prefersHtml(req) =>
+        T.span(playgroundSpan).surround:
+          playground(Path(req.uri.path.segments.dropRight(PlaygroundPath.segments.length)).toAbsolute)
+            .map(r => if playgroundShared then r.putHeaders(varyAccept) else r)
+
       // GraphQL query is embedded in the URI query string when queried via GET
-      case req @ GET -> Root / `graphQLPath` :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) +& ExtensionsMatcher(exts) =>
-        T.span(s"GET /$graphQLPath").surround:
+      case req @ GET -> GraphQLPath() :?  QueryMatcher(query) +& OperationNameMatcher(op) +& VariablesMatcher(vars) +& ExtensionsMatcher(exts) =>
+        T.span(s"GET $GraphQLPath").surround:
           debug"GET one off: query=$query, op=$op, vars=$vars, exts=$exts" *>
-          withHandler(req)(_.oneOffGet(query, op, vars, exts))
+          withHandler(req)(_.oneOffGet(query, op, vars, exts)).map(_.putHeaders(varyAccept))
 
       // A GET request without a `query` parameter is not a well-formed GraphQL-over-HTTP request.
       // The specification asks for status 422.
-      case req @ GET -> Root / `graphQLPath` =>
-        T.span(s"GET /$graphQLPath").surround:
+      case req @ GET -> GraphQLPath() =>
+        T.span(s"GET $GraphQLPath").surround:
           debug"GET one off: no query parameter" *>
           negotiated(req): t =>
             t.errorResponse[F](
               UnprocessableContent,
               "The request must have a `query` parameter."
-            ).pure[F]
+            ).putHeaders(varyAccept).pure[F]
 
       // GraphQL query is embedded in a Json request body when queried via POST
-      case req @ POST -> Root / `graphQLPath` =>
-        T.span(s"POST /$graphQLPath").surround:
+      case req @ POST -> GraphQLPath() =>
+        T.span(s"POST $GraphQLPath").surround:
           debug"POST one off: request=$req" *>
           withHandler(req)(_.oneOffPost(req))
 
-      // WebSocket connection request.
-      case req @ GET -> Root / `wsPath` =>
-        T.span(s"GET /$wsPath").surround:
-          debug"GET web socket: $req" *>
-          warnOnce *> wsHandler.webSocketConnection(wsBuilder)
-
-      // GraphQL Playground
-      case req @ GET -> Root / `playgroundPath` =>
-        T.span(s"GET /$playgroundPath").surround:
-          playground(Path(req.uri.path.segments.dropRight(Path.unsafeFromString(playgroundPath).segments.length)).toAbsolute)
-
       // The specification asks for status 405 when the request uses an unsupported method. RFC
       // 9110 requires the `Allow` header with this status.
-      case req @ _ -> Root / `graphQLPath` =>
-        T.span(s"${req.method} /$graphQLPath").surround:
+      case req @ _ -> GraphQLPath() =>
+        T.span(s"${req.method} $GraphQLPath").surround:
           debug"Unsupported method ${req.method}" *>
           negotiated(req): t =>
             t.errorResponse[F](

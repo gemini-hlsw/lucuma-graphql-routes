@@ -90,6 +90,18 @@ object ResponseMediaType:
   def negotiate(headers: Headers): Option[ResponseMediaType] =
     negotiateOrError(headers).toOption
 
+
+  /**
+   * The highest q value that the `Accept` header gives to the media type. A media range that
+   * includes the media type counts. The result is `None` when the client does not accept the
+   * media type.
+   */
+  private[routes] def priority(accept: Accept, mediaType: MediaType): Option[QValue] =
+    accept.values.toList
+      .filter(entry => entry.mediaRange.satisfiedBy(mediaType) && entry.qValue > QValue.Zero)
+      .map(_.qValue)
+      .maximumOption
+
   /**
    * Select the media type of a response from the `Accept` header of the request.
    *
@@ -101,14 +113,7 @@ object ResponseMediaType:
     headers.get[Accept] match
       case None         => LegacyJson.asRight
       case Some(accept) =>
-        // Extract the highest q value of that media type
-        def priority(mediaType: MediaType): Option[QValue] =
-          accept.values.toList
-            .filter(entry => entry.mediaRange.satisfiedBy(mediaType) && entry.qValue > QValue.Zero)
-            .map(_.qValue)
-            .maximumOption
-
-        (priority(GraphQLResponseJson), priority(Json)) match
+        (priority(accept, GraphQLResponseJson), priority(accept, Json)) match
           case (Some(graphQL), Some(json)) => (if json > graphQL then LegacyJson else GraphQL).asRight
           case (Some(_), None)             => GraphQL.asRight
           case (None, Some(_))             => LegacyJson.asRight

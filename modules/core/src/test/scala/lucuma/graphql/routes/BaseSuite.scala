@@ -110,16 +110,20 @@ abstract class BaseSuite extends CatsEffectSuite:
         .withShutdownTimeout(Duration.Zero)
         .build
 
+  // The URI of the endpoint at the given path. The path can have more than one segment.
+  protected def endpointUri(svr: Server, path: String): Http4sUri =
+    svr.baseUri.withPath(svr.baseUri.path.concat(Http4sUri.Path.unsafeFromString(path)).toAbsolute)
+
   private def fetchClient(bearerToken: Option[String])(svr: Server): Resource[IO, FetchClient[IO, Nothing]] =
     val xbe = Http4sHttpBackend[IO](httpClientFixture())
-    val uri = svr.baseUri / "graphql"
+    val uri = endpointUri(svr, routesConfig.graphQLPath)
     val hs  = Headers(bearerToken.toList.map(s => Authorization(Credentials.Token(AuthScheme.Bearer, s)))*)
     Resource.eval(Http4sHttpClient.of[IO, Nothing](uri, headers = hs)(using Async[IO], xbe, Logger[IO]))
 
   private def wsUri(svr: Server): Http4sUri =
-    (svr.baseUri / "ws").copy(scheme = Http4sUri.Scheme.unsafeFromString("ws").some)
+    endpointUri(svr, routesConfig.wsPath).copy(scheme = Http4sUri.Scheme.unsafeFromString("ws").some)
 
-  // A handshake request for the `/ws` endpoint, with the subprotocol that the server requires.
+  // A handshake request for the WebSocket endpoint, with the subprotocol that the server requires.
   protected def wsRequest(svr: Server): WSRequest =
     WSRequest(wsUri(svr)).withHeaders(WsRouteHandler.SubprotocolHeaders)
 
@@ -132,15 +136,19 @@ abstract class BaseSuite extends CatsEffectSuite:
       _  <- Resource.make(sc.connect(ps.pure[IO]))(_ => sc.disconnect())
     yield sc
 
-  // Send a request to the /graphql endpoint without any client-side interpretation, and return
+  // Send a request to the GraphQL endpoint without any client-side interpretation, and return
   // the status, the headers and the body text of the response. Use this to assert on the parts
   // of the response that a GraphQL client hides, such as the status code and the media type.
   protected def rawResponse(mkRequest: Http4sUri => Request[IO]): IO[(Status, Headers, String)] =
+    rawResponseAt(routesConfig.graphQLPath)(mkRequest)
+
+  // Like `rawResponse`, for the endpoint at the given path.
+  protected def rawResponseAt(path: String)(mkRequest: Http4sUri => Request[IO]): IO[(Status, Headers, String)] =
     Resource.eval(IO(serverFixture()))
-      .flatMap(svr => JdkHttpClient.simple[IO].flatMap(_.run(mkRequest(svr.baseUri / "graphql"))))
+      .flatMap(svr => JdkHttpClient.simple[IO].flatMap(_.run(mkRequest(endpointUri(svr, path)))))
       .use(resp => resp.bodyText.compile.string.map((resp.status, resp.headers, _)))
 
-  // Opens a raw WebSocket to the `/ws` endpoint, sends the frames, and returns the first `count`
+  // Opens a raw WebSocket to the WebSocket endpoint, sends the frames, and returns the first `count`
   // frames that the server sends. The stream stops early if the server closes the socket. Use this
   // to send frames that a GraphQL client cannot send, such as a fragment or a message that is not
   // valid JSON.
