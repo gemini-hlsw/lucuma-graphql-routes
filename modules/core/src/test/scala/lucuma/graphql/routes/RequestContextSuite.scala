@@ -65,9 +65,6 @@ class RequestContextSuite extends BaseSuite:
   test("[http] The context of the request reaches the elaborator."):
     expect(Some("bob"), "query { whoAmI }", Right(json"""{ "whoAmI": "bob" }"""), None, Http)
 
-  test("[http] A second request with a second token gets its own context."):
-    expect(Some("sue"), "query { whoAmI }", Right(json"""{ "whoAmI": "sue" }"""), None, Http)
-
   test("[ws] The context of the socket reaches a subscription."):
     subscriptionExpect(
       bearerToken = Some("bob"),

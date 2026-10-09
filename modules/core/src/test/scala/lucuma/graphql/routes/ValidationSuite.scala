@@ -5,8 +5,6 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import clue.ResponseException
-import grackle.circe.CirceMapping
-import grackle.syntax.*
 import io.circe.Json
 
 import BaseSuite.ClientOption
@@ -14,17 +12,10 @@ import BaseSuite.ClientOption.*
 
 // This suite tests that validation failures are raised appropriately.
 
-object ValidationMapping extends CirceMapping[IO]:
-  val schema = schema"""
-    type Query { foo: Int }
-    type Subscription { bar: Int }
-  """
-  val typeMappings = TypeMappings.unchecked()
-
 class ValidationSuite extends BaseSuite:
 
   val graphQLService: GraphQLService[IO] =
-    GraphQLService.unvalidated(ValidationMapping)
+    GraphQLService.unvalidated(TestMapping)
 
   def testQuery(option: ClientOption): IO[Unit] =
     expect(

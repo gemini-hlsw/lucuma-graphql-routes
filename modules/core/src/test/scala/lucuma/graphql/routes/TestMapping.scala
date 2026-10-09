@@ -31,6 +31,7 @@ object TestMapping extends CirceMapping[IO]:
       echo(s: String): String!
       empty: String!
       ticks: String!
+      failing: String!
     }
   """
   val QueryType        = schema.ref("Query")
@@ -55,8 +56,23 @@ object TestMapping extends CirceMapping[IO]:
         Stream.empty.covary[IO],
       // A source stream that never ends, so a test can close the subscription while it runs.
       RootStream.computeJson("ticks"): (_, _) =>
-        Stream.awakeEvery[IO](25.milliseconds).as(Result(Json.fromString("tick")))
+        Stream.awakeEvery[IO](25.milliseconds).as(Result(Json.fromString("tick"))),
+      // Two results, then a failure of the source stream.
+      RootStream.computeJson("failing"): (_, _) =>
+        Stream(Result(Json.fromString("first")), Result(Json.fromString("second"))).covary[IO] ++
+          Stream.raiseError[IO](new RuntimeException("boom"))
     ))
   )
   override val selectElaborator = SelectElaborator:
     case (_, "echo", List(Binding("s", StringValue(s)))) => Elab.env("s" -> s)
+
+object PingMapping extends CirceMapping[IO]:
+  val schema = schema"""
+    type Query { ping: String! }
+  """
+  val QueryType    = schema.ref("Query")
+  val typeMappings = TypeMappings.unchecked(
+    ObjectMapping(QueryType)(
+      CursorFieldJson("ping", _ => Result.success(Json.fromString("pong")), Nil)
+    )
+  )

@@ -5,15 +5,15 @@ package lucuma.graphql.routes
 
 import cats.effect.*
 import cats.implicits.*
+import clue.ResponseException
 import io.circe.Json
 import io.circe.JsonObject
 import io.circe.literal.*
 
 import scala.concurrent.duration.*
 
-// Tests that the server sends a `Complete` message when a subscription source stream ends
-// naturally, without the client initiating the close.
-
+// The end of a subscription over a socket: the source stream ends, the client sends `complete`,
+// or the source stream fails. `SubscriptionsSuite` covers the same paths without a socket.
 class SubscriptionCompleteSuite extends BaseSuite:
 
   val graphQLService: GraphQLService[IO] =
@@ -24,19 +24,10 @@ class SubscriptionCompleteSuite extends BaseSuite:
   private val echoVars: JsonObject = Json.obj("abc" -> Json.fromString("foo")).asObject.get
   private val expected: List[Json] = List.fill(3)(json"""{ "echo": "foo" }""")
 
-  test("server sends Complete when subscription source stream ends naturally"):
-    // We deliberately do NOT call the subscription cleanup (i.e., we never send
-    // client→server Complete).  The stream must terminate on its own because the
-    // server sends the Complete message.  Without the fix this times out.
-    openSubscription(none, echoQuery, echoVars.some).use: (sub, _) =>
-      sub.compile.toList
-        .timeout(5.seconds)
-        .assertEquals(expected)
-
-  test("id is removed from map after natural completion: client cleanup is a no-op"):
-    // After the stream ends naturally and the server sends Complete (removing the id),
-    // calling the client cleanup should be a harmless no-op (id is no longer in the
-    // server-side map, so no duplicate Complete is produced).
+  test("server sends Complete when the source stream ends, and a later client Complete is a no-op"):
+    // The client sends no `complete` before the stream ends, so the stream can only end because
+    // the server sends `Complete`. The id is gone from the server-side map by then, so the late
+    // client cleanup changes nothing.
     openSubscription(none, echoQuery, echoVars.some).use: (sub, cleanup) =>
       for
         obt <- sub.compile.toList.timeout(5.seconds)
@@ -52,16 +43,6 @@ class SubscriptionCompleteSuite extends BaseSuite:
         .timeout(5.seconds)
         .assertEquals(List.empty[Json])
 
-  test("explicit client Complete still works after the stream already ended"):
-    // The echo stream ends before the helper calls the client cleanup, so this covers the
-    // ordinary path: the server already sent Complete, and the late cleanup changes nothing.
-    subscription(
-      bearerToken = none,
-      query       = echoQuery,
-      mutations   = Right(IO.unit),
-      variables   = echoVars.some,
-    ).assertEquals(expected)
-
   test("explicit client Complete interrupts a still-running subscription"):
     // The `ticks` source stream never ends, so the client cleanup runs while the subscription
     // is live.  This covers the interruptWhen path: remove() takes the map entry, sends
@@ -74,3 +55,19 @@ class SubscriptionCompleteSuite extends BaseSuite:
     ).timeout(5.seconds).map: obt =>
       assert(obt.nonEmpty, "expected at least one tick before the client cleanup ran")
       assertEquals(obt.map(_.spaces2).distinct, List(json"""{ "ticks": "tick" }""".spaces2))
+
+  test("a failure of the source stream gives the client the results so far, then an error message"):
+    for
+      errorRef <- IO.ref(Option.empty[ResponseException[Json]])
+      results  <- subscription(
+                    bearerToken = none,
+                    query       = "subscription { failing }",
+                    mutations   = Right(IO.unit),
+                    variables   = none,
+                    onError     = e => errorRef.set(Some(e))
+                  )
+      err      <- errorRef.get
+    yield
+      assertEquals(results, List(json"""{"failing":"first"}""", json"""{"failing":"second"}"""))
+      assert(err.isDefined, "expected a ResponseException to be delivered via onError")
+      assert(err.exists(_.errors.head.message.contains("Internal Error")), s"unexpected error content: $err")

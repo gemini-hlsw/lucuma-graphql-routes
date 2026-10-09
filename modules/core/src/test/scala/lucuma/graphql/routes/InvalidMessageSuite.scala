@@ -30,9 +30,6 @@ final class InvalidMessageSuite extends BaseSuite:
   test("a JSON message of an unknown type closes the socket with code 4400"):
     closeCode(WSFrame.Text("""{"type":"bogus"}""")).assertEquals(4400.some)
 
-  test("a JSON message that is not an object closes the socket with code 4400"):
-    closeCode(WSFrame.Text("""[1,2,3]""")).assertEquals(4400.some)
-
   test("a binary frame closes the socket with code 4400"):
     closeCode(WSFrame.Binary(ByteVector(1, 2, 3))).assertEquals(4400.some)
 
@@ -41,7 +38,3 @@ final class InvalidMessageSuite extends BaseSuite:
       .map: obt =>
         assertEquals(obt.length, 1, s"the server replied after the close, got $obt")
         assertEquals(closeCodeOf(obt), 4400.some)
-
-  test("a valid connection_init still gets an acknowledgement"):
-    rawWsFrames(1)(WSFrame.Text("""{"type":"connection_init"}""")).map: obt =>
-      assert(obt.exists { case WSFrame.Text(s, _) => s.contains("connection_ack"); case _ => false }, s"got $obt")

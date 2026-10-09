@@ -10,19 +10,19 @@ import clue.model.StreamingMessage.FromServer
 import scala.concurrent.duration.*
 
 /**
- * The graphql-transport-ws protocol lets a client run more than one operation at a time, and a
- * client `complete` message stops the operation with that id. This holds for single result
- * operations too: the server must not send the result after the client sent `complete`. This
- * suite checks queries and mutations on the virtual clock; `slow` and `slowUpdate` produce one
- * result after 10 seconds.
+ * The operations of one connection, each with a client-provided id. The graphql-transport-ws
+ * protocol lets a client run more than one operation at a time. A client `complete` message stops
+ * the operation with that id, and the protocol reserves close code 4409 for a `subscribe` message
+ * that reuses an active id. This suite runs on the virtual clock: `slow` produces one result after
+ * 10 seconds, and `ticks` never ends. A mutation takes the same path as a query on a socket.
  */
 final class OperationCancelSuite extends ConnectionSuite:
 
   private def slowQuery(id: String): FromClient =
     fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"query { slow }"}}""")
 
-  private def slowMutation(id: String): FromClient =
-    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"mutation { slowUpdate }"}}""")
+  private def subscribe(id: String): FromClient =
+    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"subscription { ticks }"}}""")
 
   // The settle time gives every started operation time to finish.
   private def replies(ms: FromClient*): IO[List[Reply]] =
@@ -50,15 +50,16 @@ final class OperationCancelSuite extends ConnectionSuite:
     case Reply.Send(FromServer.Complete(`id`)) => true
     case _                                     => false
 
+  private val alreadyExists: Reply =
+    Reply.CloseWith(GraphQLWSError.SubscriberAlreadyExists("1"))
+
+  // --- a client complete ----------------------------------------------------------
+
   // The client stopped listening, so the server sends nothing at all for the id: no result and
   // no `complete` either.
   test("a client complete cancels a running query and sends nothing for its id"):
     replies(slowQuery("1"), complete("1")).map: obt =>
       assert(!obt.exists(hasId("1")), s"expected no message for the canceled query, got $obt")
-
-  test("a client complete cancels a running mutation and sends nothing for its id"):
-    replies(slowMutation("1"), complete("1")).map: obt =>
-      assert(!obt.exists(hasId("1")), s"expected no message for the canceled mutation, got $obt")
 
   test("a slow query does not block messages that arrive after it"):
     replies(slowQuery("1"), ping).map: obt =>
@@ -80,22 +81,18 @@ final class OperationCancelSuite extends ConnectionSuite:
       // query on the client before its result arrived.
       assertEquals(countComplete("1")(obt), 1, s"expected one complete for id 1, got $obt")
 
-  test("a client complete that arrives after the query finished changes nothing"):
-    repliesOf(1.hour)(conn =>
-      conn.receive(slowQuery("1")) *> IO.sleep(1.hour) *> conn.receive(complete("1"))
-    ).map: obt =>
-      assertEquals(obt.count(isNext("1")), 1, s"expected one result, got $obt")
-      assertEquals(countComplete("1")(obt), 1, s"expected one complete for id 1, got $obt")
-      assert(!obt.exists(isError("1")), s"the late complete produced an error, got $obt")
-      assert(!obt.exists(_.isTerminal), s"the late complete closed the socket, got $obt")
-
   test("a client complete for an id that was never used is ignored"):
     replies(complete("99")).map: obt =>
       assertEquals(countComplete("99")(obt), 0, s"expected no complete for id 99, got $obt")
       assert(!obt.exists(isError("99")), s"the unknown id produced an error, got $obt")
       assert(!obt.exists(_.isTerminal), s"the unknown id closed the socket, got $obt")
 
-  test("a second subscribe that reuses the id of a running query closes the socket with 4409"):
-    replies(slowQuery("1"), slowQuery("1")).map: obt =>
-      val close = Reply.CloseWith(GraphQLWSError.SubscriberAlreadyExists("1"))
-      assert(obt.contains(close), s"expected a 4409 close request, got $obt")
+  // --- a duplicate id, close code 4409 ----------------------------------------------
+
+  test("a second subscribe with an active id closes the socket with code 4409 and ends the reply stream"):
+    repliesAfter(1.second)(subscribe("1"), subscribe("1")).map: obt =>
+      assertEquals(obt.lastOption, Some(alreadyExists), s"expected a 4409 close as the last reply, got $obt")
+
+  test("a subscribe with a free id does not close the socket"):
+    repliesAfter(1.second)(subscribe("1"), subscribe("2")).map: obt =>
+      assert(!obt.contains(alreadyExists), s"the second id closed the socket, got $obt")

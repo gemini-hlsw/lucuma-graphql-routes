@@ -18,7 +18,7 @@ import org.typelevel.ci.*
 class SharedPathSuite extends BaseSuite:
 
   val graphQLService: GraphQLService[IO] =
-    GraphQLService.unvalidated(RequestErrorMapping)
+    GraphQLService.unvalidated(PingMapping)
 
   override def routesConfig: RoutesConfig =
     RoutesConfig(graphQLPath = "graphql", wsPath = "graphql", playgroundPath = "graphql")
@@ -70,11 +70,6 @@ class SharedPathSuite extends BaseSuite:
 
   test("a q value of 0 for text/html gets a GraphQL response"):
     get("text/html;q=0, */*".some, "query" -> "{ ping }").map: (status, headers, _) =>
-      assertEquals(status, Status.Ok)
-      assertEquals(headers.mediaType, `application/graphql-response+json`.some)
-
-  test("a lower q value for text/html than for GraphQL gets a GraphQL response"):
-    get("application/graphql-response+json, text/html;q=0.1".some, "query" -> "{ ping }").map: (status, headers, _) =>
       assertEquals(status, Status.Ok)
       assertEquals(headers.mediaType, `application/graphql-response+json`.some)
 

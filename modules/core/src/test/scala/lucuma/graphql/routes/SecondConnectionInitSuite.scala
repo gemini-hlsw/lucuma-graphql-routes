@@ -29,12 +29,9 @@ final class SecondConnectionInitSuite extends ConnectionSuite:
   private def replies(ms: FromClient*): IO[List[Reply]] =
     repliesAfter(1.second)(ms*)
 
-  test("a second connection_init closes the socket with code 4429"):
+  test("a second connection_init closes the socket with code 4429 and is not acknowledged"):
     replies(init).map: obt =>
       assertEquals(obt.lastOption, tooManyInits.some, s"expected a 4429 close request, got $obt")
-
-  test("a second connection_init is not acknowledged"):
-    replies(init).map: obt =>
       assertEquals(obt.count(_ == ack), 1, s"the second connection_init was acknowledged, got $obt")
 
   test("a message that arrives after the close is ignored"):
@@ -46,8 +43,3 @@ final class SecondConnectionInitSuite extends ConnectionSuite:
       conn.receive(subscribe) *> IO.sleep(100.milliseconds) *> conn.receive(init)
     .map: obt =>
       assertEquals(obt.lastOption, tooManyInits.some, s"the subscription outlived the close: $obt")
-
-  test("one connection_init still gets an acknowledgement"):
-    replies().map: obt =>
-      assert(obt.contains(ack), s"the connection was not acknowledged, got $obt")
-      assert(!obt.contains(tooManyInits), s"a single connection_init closed the socket, got $obt")

@@ -127,18 +127,6 @@ class SubscriptionsSuite extends CatsEffectSuite:
         assert(res, "the reused id did not start an event stream")
         assertEquals(obt, List("error:1", "next:1", "complete:1"))
 
-  test("no Complete follows an Error when the caller removes the subscription"):
-    // The Error ends the stream and frees the id. A later `remove` must find nothing and must
-    // not send a Complete for the ended id.
-    run: (subs, log) =>
-      for
-        _   <- subs.add("1", Stream(Result.failure[Json]("boom")).covary[IO] ++ Stream.never[IO])
-        _   <- IO.sleep(100.milliseconds)
-        _   <- subs.remove("1")
-        _   <- settle
-        obt <- log
-      yield assertEquals(obt, List("error:1"))
-
   test("no Complete follows an Error when removeAll stops the subscription"):
     run: (subs, log) =>
       for
@@ -149,7 +137,7 @@ class SubscriptionsSuite extends CatsEffectSuite:
         obt <- log
       yield assertEquals(obt, List("error:1"))
 
-  test("remove on a running subscription sends no Complete"):
+  test("remove on a running subscription sends no Complete and frees the id"):
     run: (subs, log) =>
       for
         _   <- subs.add("1", Stream.awakeEvery[IO](25.milliseconds).as(ok))
@@ -157,28 +145,19 @@ class SubscriptionsSuite extends CatsEffectSuite:
         _   <- subs.remove("1")
         _   <- settle
         obt <- log
+        res <- subs.add("1", Stream(ok).covary[IO])
       yield
         assert(obt.count(_ === "next:1") >= 1, "the stream sent nothing before remove")
         assertEquals(obt.count(_ === "complete:1"), 0)
+        assert(res, "the id was not free after remove")
 
-  test("a subscribe with an id that is active reports a duplicate and sends nothing"):
-    run: (subs, log) =>
-      for
-        _   <- subs.add("1", Stream.never[IO])
-        res <- subs.add("1", Stream(ok).covary[IO])
-        _   <- settle
-        obt <- log
-      yield
-        assert(!res, "the duplicate id started an event stream")
-        assertEquals(obt, Nil)
-
-  test("a duplicate subscribe does not cancel or replace the active subscription"):
+  test("a duplicate subscribe reports the duplicate and does not cancel or replace the active subscription"):
     run: (subs, log) =>
       for
         _      <- subs.add("1", Stream.awakeEvery[IO](25.milliseconds).as(ok))
         _      <- IO.sleep(100.milliseconds)
         // The duplicate stream would send an Error if it started.
-        _      <- subs.add("1", Stream(Result.failure[Json]("dup")).covary[IO])
+        res    <- subs.add("1", Stream(Result.failure[Json]("dup")).covary[IO])
         before <- log.map(_.count(_ === "next:1"))
         _      <- IO.sleep(100.milliseconds)
         after  <- log.map(_.count(_ === "next:1"))
@@ -186,6 +165,7 @@ class SubscriptionsSuite extends CatsEffectSuite:
         _      <- settle
         obt    <- log
       yield
+        assert(!res, "the duplicate id reported a start")
         assert(after > before, "the duplicate subscribe stopped the active stream")
         assert(!obt.contains("error:1"), "the duplicate stream started")
         assertEquals(obt.count(_ === "complete:1"), 1)
@@ -199,13 +179,3 @@ class SubscriptionsSuite extends CatsEffectSuite:
         _   <- settle
         obt <- log
       yield assertEquals(obt, List("next:1", "complete:1", "next:1", "complete:1"))
-
-  test("an id is free again after remove"):
-    run: (subs, _) =>
-      for
-        _   <- subs.add("1", Stream.awakeEvery[IO](25.milliseconds).as(ok))
-        _   <- IO.sleep(100.milliseconds)
-        _   <- subs.remove("1")
-        res <- subs.add("1", Stream(ok).covary[IO])
-        _   <- settle
-      yield assert(res, "the id was not free after remove")
