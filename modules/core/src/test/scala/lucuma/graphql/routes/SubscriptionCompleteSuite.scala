@@ -19,20 +19,17 @@ class SubscriptionCompleteSuite extends BaseSuite:
   val graphQLService: GraphQLService[IO] =
     GraphQLService.unvalidated(TestMapping)
 
-  // TestMapping's Subscription.echo emits exactly 3 results and then ends.
-  private val echoQuery: String    = """subscription($abc: String) { echo(s: $abc) }"""
-  private val echoVars: JsonObject = Json.obj("abc" -> Json.fromString("foo")).asObject.get
-  private val expected: List[Json] = List.fill(3)(json"""{ "echo": "foo" }""")
-
   test("server sends Complete when the source stream ends, and a later client Complete is a no-op"):
     // The client sends no `complete` before the stream ends, so the stream can only end because
     // the server sends `Complete`. The id is gone from the server-side map by then, so the late
-    // client cleanup changes nothing.
-    openSubscription(none, echoQuery, echoVars.some).use: (sub, cleanup) =>
+    // client cleanup changes nothing. TestMapping's Subscription.echo emits exactly 3 results and
+    // then ends.
+    val vars = JsonObject("abc" -> Json.fromString("foo"))
+    openSubscription(none, """subscription($abc: String) { echo(s: $abc) }""", vars.some).use: (sub, cleanup) =>
       for
         obt <- sub.compile.toList.timeout(5.seconds)
         _   <- cleanup
-      yield assertEquals(obt.map(_.spaces2), expected.map(_.spaces2))
+      yield assertEquals(obt, List.fill(3)(json"""{ "echo": "foo" }"""))
 
   test("server sends Complete for an immediately-finishing (empty) subscription stream"):
     // Empty source stream: the fiber can complete before `subscriptions.update` inserts
@@ -69,5 +66,4 @@ class SubscriptionCompleteSuite extends BaseSuite:
       err      <- errorRef.get
     yield
       assertEquals(results, List(json"""{"failing":"first"}""", json"""{"failing":"second"}"""))
-      assert(err.isDefined, "expected a ResponseException to be delivered via onError")
-      assert(err.exists(_.errors.head.message.contains("Internal Error")), s"unexpected error content: $err")
+      assert(err.exists(_.errors.head.message.contains("Internal Error")), s"expected an Internal Error via onError, got: $err")

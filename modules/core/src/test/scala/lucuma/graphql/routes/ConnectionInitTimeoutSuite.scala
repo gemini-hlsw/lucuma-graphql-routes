@@ -5,7 +5,6 @@ package lucuma.graphql.routes
 
 import cats.effect.IO
 import cats.syntax.all.*
-import clue.model.StreamingMessage.FromServer
 
 import scala.concurrent.duration.*
 
@@ -18,9 +17,6 @@ final class ConnectionInitTimeoutSuite extends ConnectionSuite:
 
   private val timeoutClose: Reply =
     Reply.CloseWith(GraphQLWSError.InitializationTimeout)
-
-  private val ack: Reply =
-    Reply.Send(FromServer.ConnectionAck())
 
   private val beforeExpiry: FiniteDuration = Connection.ConnectionInitWaitTimeout - 1.second
   private val afterExpiry: FiniteDuration  = Connection.ConnectionInitWaitTimeout + 1.second

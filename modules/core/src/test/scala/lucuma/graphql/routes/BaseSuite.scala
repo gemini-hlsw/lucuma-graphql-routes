@@ -24,14 +24,17 @@ import io.circe.Decoder
 import io.circe.Encoder
 import io.circe.Json
 import io.circe.JsonObject
+import io.circe.parser
 import munit.CatsEffectSuite
 import munit.catseffect.IOFixture
+import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.client.Client
 import org.http4s.client.websocket.WSClient
 import org.http4s.client.websocket.WSFrame
 import org.http4s.client.websocket.WSRequest
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.headers.Authorization
+import org.http4s.headers.`Content-Type`
 import org.http4s.jdkhttpclient.JdkHttpClient
 import org.http4s.jdkhttpclient.JdkWSClient
 import org.http4s.server.Server
@@ -145,8 +148,31 @@ abstract class BaseSuite extends CatsEffectSuite:
   // Like `rawResponse`, for the endpoint at the given path.
   protected def rawResponseAt(path: String)(mkRequest: Http4sUri => Request[IO]): IO[(Status, Headers, String)] =
     Resource.eval(IO(serverFixture()))
-      .flatMap(svr => JdkHttpClient.simple[IO].flatMap(_.run(mkRequest(endpointUri(svr, path)))))
+      .flatMap(svr => httpClientFixture().run(mkRequest(endpointUri(svr, path))))
       .use(resp => resp.bodyText.compile.string.map((resp.status, resp.headers, _)))
+
+  // Like `rawResponse`, with the body parsed as JSON. A body that is not JSON becomes `Json.Null`.
+  protected def jsonResponse(mkRequest: Http4sUri => Request[IO]): IO[(Status, Headers, Json)] =
+    rawResponse(mkRequest).map((status, headers, text) => (status, headers, parser.parse(text).getOrElse(Json.Null)))
+
+  // GET the GraphQL endpoint with the given query parameters.
+  protected def jsonGet(params: (String, String)*): IO[(Status, Headers, Json)] =
+    jsonResponse(uri => Request[IO](Method.GET, uri.withQueryParams(params.toMap)))
+
+  // The `errors` list of a response body, or an empty list if there is none.
+  protected def errorsOf(body: Json): List[Json] =
+    body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
+
+  // Assert that the response carries the GraphQL media type and a non-empty `errors` list, that
+  // each error has a message, and that it carries no `data` entry.
+  protected def assertErrorBody(headers: Headers, body: Json): Unit =
+    val contentType = headers.get[`Content-Type`].map(_.mediaType)
+    assertEquals(contentType, `application/graphql-response+json`.some)
+    val errors = errorsOf(body)
+    assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
+    assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
+    errors.foreach: error =>
+      assert(error.hcursor.downField("message").as[String].isRight, s"Expected a message, got: ${error.spaces2}")
 
   // Opens a raw WebSocket to the WebSocket endpoint, sends the frames, and returns the first `count`
   // frames that the server sends. The stream stops early if the server closes the socket. Use this

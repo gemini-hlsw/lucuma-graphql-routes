@@ -4,18 +4,13 @@
 package lucuma.graphql.routes
 
 import cats.effect.*
-import cats.implicits.*
 import grackle.Context
 import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
-import io.circe.Encoder
 import io.circe.Json
-import io.circe.parser
 import org.http4s.*
-import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.headers.Allow
-import org.http4s.headers.`Content-Type`
 
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -63,17 +58,6 @@ class GetMutationSuite extends BaseSuite:
   val graphQLService: GraphQLService[IO] =
     GraphQLService.unvalidated(GetMutationMapping)
 
-  // GET the document, with the operation name when given. Returns the status, the headers and
-  // the parsed body.
-  private def get(
-    query:         String,
-    operationName: Option[String] = None
-  ): IO[(Status, Headers, Json)] =
-    rawResponse: uri =>
-      val uri0 = uri.withQueryParam("query", query)
-      Request[IO](Method.GET, operationName.fold(uri0)(n => uri0.withQueryParam("operationName", n)))
-    .map((status, headers, text) => (status, headers, parser.parse(text).getOrElse(Json.Null)))
-
   private val mutationDoc = "mutation { increment }"
   // A document that contains both a query and a mutation operation, so we can
   // verify that the operation-name selector is what matters, not the document.
@@ -82,19 +66,16 @@ class GetMutationSuite extends BaseSuite:
   // The specification requires status 405, the `Allow` header, and a well-formed GraphQL
   // response body with the GraphQL media type.
   test("GET a mutation returns 405 with Allow: POST and a GraphQL errors body"):
-    get(mutationDoc).map: (status, headers, body) =>
+    jsonGet("query" -> mutationDoc).map: (status, headers, body) =>
       assertEquals(status, Status.MethodNotAllowed)
       assertEquals(headers.get[Allow], Some(Allow(Method.POST)))
-      assertEquals(headers.get[`Content-Type`].map(_.mediaType), `application/graphql-response+json`.some)
-      val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
-      assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
-      assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
+      assertErrorBody(headers, body)
 
   // This is the most important assertion: the mutation side-effect must NOT
   // happen when the request is rejected at the HTTP layer.
   test("GET a mutation does not execute the mutation side effect"):
     val before = GetMutationMapping.counter.get()
-    get(mutationDoc).map: _ =>
+    jsonGet("query" -> mutationDoc).map: _ =>
       assertEquals(GetMutationMapping.counter.get(), before,
         "Counter must not change when a mutation is rejected via GET")
 
@@ -113,10 +94,10 @@ class GetMutationSuite extends BaseSuite:
   // --- mixed document: operation-name selection --------------------
 
   test("GET a query operation from a mixed document succeeds"):
-    get(mixedDoc, Some("Ping")).map: (status, _, _) =>
+    jsonGet("query" -> mixedDoc, "operationName" -> "Ping").map: (status, _, _) =>
       assertEquals(status, Status.Ok)
 
   test("GET a mutation operation from a mixed document returns 405"):
-    get(mixedDoc, Some("Inc")).map: (status, headers, _) =>
+    jsonGet("query" -> mixedDoc, "operationName" -> "Inc").map: (status, headers, _) =>
       assertEquals(status, Status.MethodNotAllowed)
       assertEquals(headers.get[Allow], Some(Allow(Method.POST)))

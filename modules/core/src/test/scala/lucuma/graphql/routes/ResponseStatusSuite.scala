@@ -12,13 +12,11 @@ import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
 import io.circe.Json
-import io.circe.parser
 import org.http4s.*
 import org.http4s.MediaType.`application/graphql-response+json`
 import org.http4s.MediaType.application
 import org.http4s.circe.*
 import org.http4s.headers.Accept
-import org.http4s.headers.`Content-Type`
 
 // Mapping used by ResponseStatusSuite. Each field gives one kind of result:
 //   ping         - a plain success
@@ -73,16 +71,17 @@ class ResponseStatusSuite extends BaseSuite:
   private def post(
     query:         String,
     operationName: Option[String] = None,
-    accept:        Accept = AcceptGraphQL
-  ): IO[(Status, Json)] =
-    rawResponse: uri =>
+    accept:        Accept = AcceptGraphQL,
+    variables:     Option[Json] = None
+  ): IO[(Status, Headers, Json)] =
+    jsonResponse: uri =>
       val fields = List("query" -> Json.fromString(query)) ++
-        operationName.map(n => "operationName" -> Json.fromString(n))
+        operationName.map(n => "operationName" -> Json.fromString(n)) ++
+        variables.map("variables" -> _)
       Request[IO](Method.POST, uri).withEntity(Json.fromFields(fields)).putHeaders(accept)
-    .map((status, _, body) => (status, parser.parse(body).getOrElse(Json.Null)))
 
   private def hasErrors(body: Json): Boolean =
-    body.hcursor.downField("errors").as[List[Json]].exists(_.nonEmpty)
+    errorsOf(body).nonEmpty
 
   private def hasData(body: Json): Boolean =
     body.hcursor.downField("data").succeeded
@@ -96,20 +95,20 @@ class ResponseStatusSuite extends BaseSuite:
   // Grackle reports a field error as a null `data` entry. The `data` entry is present, so the
   // specification asks for status 294 and forbids a 4xx or 5xx status.
   test("a field error returns 294 with a null data entry"):
-    post("query { nullableFail }").map: (status, body) =>
+    post("query { nullableFail }").map: (status, _, body) =>
       assertEquals(status.code, 294)
       assert(hasNullData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
 
   // A field error next to a field that succeeds still gives status 294.
   test("a field error beside a successful field returns 294"):
-    post("query { ping nullableFail }").map: (status, body) =>
+    post("query { ping nullableFail }").map: (status, _, body) =>
       assertEquals(status.code, 294)
       assert(hasData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
 
   test("a legacy client gets 200 for a response with data and errors"):
-    post("query { nullableFail }", accept = AcceptJson).map: (status, body) =>
+    post("query { nullableFail }", accept = AcceptJson).map: (status, _, body) =>
       assertEquals(status, Status.Ok)
       assert(hasData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
@@ -118,7 +117,7 @@ class ResponseStatusSuite extends BaseSuite:
   // data. The error comes from execution, so the specification treats it as a field error: the
   // response must have a `data` entry, which is null, and a 2xx status.
   test("an effect handler failure returns 294 with a null data entry"):
-    post("query { effectFail }").map: (status, body) =>
+    post("query { effectFail }").map: (status, _, body) =>
       assertEquals(status.code, 294)
       assert(hasNullData(body), body.spaces2)
       assert(hasErrors(body), body.spaces2)
@@ -128,54 +127,37 @@ class ResponseStatusSuite extends BaseSuite:
   // The specification requires a well-formed GraphQL response body for the GraphQL media type at
   // every status. An unexpected server error gives status 500 with an `errors` entry, a generic
   // message, and no `data` entry.
-  test("an internal error returns 500 with a GraphQL error body"):
-    rawResponse: uri =>
-      Request[IO](Method.POST, uri)
-        .withEntity(Json.obj("query" -> Json.fromString("query { internalFail }")))
-        .putHeaders(AcceptGraphQL)
-    .map: (status, headers, text) =>
-      val body = parser.parse(text).getOrElse(Json.Null)
-      assertEquals(status, Status.InternalServerError)
-      assert(hasErrors(body), text)
-      assert(!hasData(body), text)
-      assert(!text.contains("secret internal detail"), text)
-      val contentType = headers.get[`Content-Type`].map(_.mediaType)
-      assertEquals(contentType, `application/graphql-response+json`.some)
-
-  test("an exception raised by an effect handler returns 500 with a GraphQL error body"):
-    post("query { effectThrow }").map: (status, body) =>
-      assertEquals(status, Status.InternalServerError)
-      assert(hasErrors(body), body.spaces2)
-      assert(!hasData(body), body.spaces2)
-      assert(!body.spaces2.contains("secret effect detail"), body.spaces2)
+  List(
+    ("an internal error", "internalFail", "secret internal detail"),
+    ("an exception raised by an effect handler", "effectThrow", "secret effect detail")
+  ).foreach: (name, field, secret) =>
+    test(s"$name returns 500 with a GraphQL error body"):
+      post(s"query { $field }").map: (status, headers, body) =>
+        assertEquals(status, Status.InternalServerError)
+        assertErrorBody(headers, body)
+        assert(!body.noSpaces.contains(secret), body.spaces2)
 
   // --- request errors ---------------------------------------------------------
 
   test("a document that does not parse returns 400"):
-    post("query {").map: (status, body) =>
+    post("query {").map: (status, _, body) =>
       assertEquals(status, Status.BadRequest)
       assert(hasErrors(body), body.spaces2)
       assert(!hasData(body), body.spaces2)
 
   test("a document that fails validation returns 422"):
-    post("query { nope }").map: (status, body) =>
+    post("query { nope }").map: (status, _, body) =>
       assertEquals(status, Status.UnprocessableContent)
       assert(hasErrors(body), body.spaces2)
 
   test("an operation that cannot be determined returns 422"):
-    post("query A { ping } query B { ping }", "C".some).map: (status, body) =>
+    post("query A { ping } query B { ping }", "C".some).map: (status, _, body) =>
       assertEquals(status, Status.UnprocessableContent)
       assert(hasErrors(body), body.spaces2)
 
   test("a variable value that does not coerce returns 422"):
-    rawResponse: uri =>
-      Request[IO](Method.POST, uri).withEntity(
-        Json.obj(
-          "query"     -> Json.fromString("query Q($i: Int!) { ping }"),
-          "variables" -> Json.obj("i" -> Json.fromString("not an int"))
-        )
-      )
-    .map((status, _, _) => assertEquals(status, Status.UnprocessableContent))
+    post("query Q($i: Int!) { ping }", variables = Json.obj("i" -> Json.fromString("not an int")).some)
+      .map((status, _, _) => assertEquals(status, Status.UnprocessableContent))
 
   // --- a clue client reads the body of a 294 response -------------------------
 

@@ -6,7 +6,6 @@ package lucuma.graphql.routes
 import cats.effect.IO
 import cats.syntax.all.*
 import clue.model.StreamingMessage.FromClient
-import clue.model.StreamingMessage.FromServer
 
 import scala.concurrent.duration.*
 
@@ -16,15 +15,8 @@ import scala.concurrent.duration.*
  */
 final class SecondConnectionInitSuite extends ConnectionSuite:
 
-  // The `ticks` source stream never ends, so the subscription stays active.
-  private val subscribe: FromClient =
-    fromClient("""{"id":"1","type":"subscribe","payload":{"query":"subscription { ticks }"}}""")
-
   private val tooManyInits: Reply =
     Reply.CloseWith(GraphQLWSError.TooManyInitializationRequests)
-
-  private val ack: Reply =
-    Reply.Send(FromServer.ConnectionAck())
 
   private def replies(ms: FromClient*): IO[List[Reply]] =
     repliesAfter(1.second)(ms*)
@@ -35,11 +27,11 @@ final class SecondConnectionInitSuite extends ConnectionSuite:
       assertEquals(obt.count(_ == ack), 1, s"the second connection_init was acknowledged, got $obt")
 
   test("a message that arrives after the close is ignored"):
-    replies(init, subscribe, complete("1"), init).map: obt =>
+    replies(init, subscribe("1"), complete("1"), init).map: obt =>
       assertEquals(obt.lastOption, tooManyInits.some, s"the close was not the last reply: $obt")
 
   test("an active subscription stops when the second connection_init arrives"):
     repliesOf(1.second): conn =>
-      conn.receive(subscribe) *> IO.sleep(100.milliseconds) *> conn.receive(init)
+      conn.receive(subscribe("1")) *> IO.sleep(100.milliseconds) *> conn.receive(init)
     .map: obt =>
       assertEquals(obt.lastOption, tooManyInits.some, s"the subscription outlived the close: $obt")

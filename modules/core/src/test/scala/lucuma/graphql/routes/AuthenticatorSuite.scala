@@ -25,13 +25,10 @@ class AuthenticatorSuite extends CatsEffectSuite:
     assertEquals(Auth.fromOption(None), Auth.Anonymous)
     assertEquals(Auth.fromOption(Some(ctx)), Auth.Authenticated(ctx))
 
-  private val bob: Option[Authorization] =
-    Authorization(Credentials.Token(AuthScheme.Bearer, "bob")).some
-
   test("Authenticator.open authenticates every request with an empty context."):
     Authenticator.open[IO].authenticate(None).assertEquals(Auth.Authenticated(RequestContext.empty))
 
   test("fromOptionF maps None to Anonymous and Some to Authenticated."):
     val a = Authenticator.fromOptionF[IO](h => IO.pure(h.as(RequestContext(Env("user" -> "bob")))))
     a.authenticate(None).assertEquals(Auth.Anonymous) *>
-      a.authenticate(bob).assertEquals(Auth.Authenticated(RequestContext(Env("user" -> "bob"))))
+      a.authenticate(Authorization(Credentials.Token(AuthScheme.Bearer, "bob")).some).assertEquals(Auth.Authenticated(RequestContext(Env("user" -> "bob"))))

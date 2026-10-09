@@ -7,6 +7,7 @@ import cats.effect.IO
 import cats.effect.testkit.TestControl
 import cats.syntax.all.*
 import clue.model.StreamingMessage.FromClient
+import clue.model.StreamingMessage.FromServer
 import clue.model.json.given
 import io.circe.parser.decode
 import munit.CatsEffectSuite
@@ -33,6 +34,12 @@ abstract class ConnectionSuite extends CatsEffectSuite:
   protected val ping: FromClient = FromClient.Ping()
 
   protected def complete(id: String): FromClient = FromClient.Complete(id)
+
+  // The default query is `ticks`, a source stream that never ends, so the operation stays active.
+  protected def subscribe(id: String, query: String = "subscription { ticks }"): FromClient =
+    fromClient(s"""{"id":"$id","type":"subscribe","payload":{"query":"$query"}}""")
+
+  protected val ack: Reply = Reply.Send(FromServer.ConnectionAck())
 
   /** The service that the connection authorizes against. */
   protected val testService: GraphQLService[IO] =
