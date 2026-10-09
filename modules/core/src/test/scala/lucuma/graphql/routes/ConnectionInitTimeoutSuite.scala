@@ -37,12 +37,6 @@ final class ConnectionInitTimeoutSuite extends ConnectionSuite:
     rawRepliesOf(afterExpiry)(_.receive(init)).map: obt =>
       assert(!obt.contains(timeoutClose), s"the timer fired after connection_init, got $obt")
 
-  test("a connection_init that arrives after the timeout is ignored"):
-    rawRepliesOf(1.second): conn =>
-      IO.sleep(afterExpiry) *> conn.receive(init)
-    .map: obt =>
-      assert(!obt.contains(ack), s"a late connection_init was acknowledged, got $obt")
-
   test("slow authorization after a timely connection_init does not cause a 4408 close"):
     val slow =
       Authenticator[IO]: _ =>

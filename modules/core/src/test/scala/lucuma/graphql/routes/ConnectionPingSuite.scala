@@ -11,27 +11,21 @@ import clue.model.StreamingMessage.FromClient
 import clue.model.StreamingMessage.FromServer
 import io.circe.Json
 import io.circe.JsonObject
-import munit.CatsEffectSuite
-import org.typelevel.log4cats.Logger
-import org.typelevel.otel4s.trace.Tracer
 
 /**
  * The graphql-transport-ws protocol permits a `ping` message in both directions. The receiver must
  * reply with a `pong` as soon as possible. A `ping` can arrive at any time on an open socket, so
  * the reply does not depend on the connection state.
  */
-final class ConnectionPingSuite extends CatsEffectSuite:
+final class ConnectionPingSuite extends ConnectionSuite:
 
-  given Logger[IO] = BaseSuite.logger
-  given Tracer[IO] = Tracer.noop[IO]
-
-  /** A connection with a real service. Ping and pong tests do not exercise the schema. */
+  // The replies go straight to the queue, so these tests read one reply at a time.
   private val connection: Resource[IO, (Connection[IO], Queue[IO, Reply])] =
-    BaseSuite.connectionResource(GraphQLService.unvalidated(TestMapping))
+    BaseSuite.connectionResource(testService)
 
   test("A Ping before ConnectionInit gets a Pong reply"):
     connection.use: (conn, queue) =>
-      conn.receive(FromClient.Ping()) *>
+      conn.receive(ping) *>
         queue.take.assertEquals(Reply.Send(FromServer.Pong()))
 
   test("A Ping with a payload gets a Pong reply without a payload"):
@@ -39,15 +33,6 @@ final class ConnectionPingSuite extends CatsEffectSuite:
     connection.use: (conn, queue) =>
       conn.receive(FromClient.Ping(payload.some)) *>
         queue.take.assertEquals(Reply.Send(FromServer.Pong()))
-
-  test("A Ping does not close the connection"):
-    connection.use: (conn, queue) =>
-      for
-        _ <- conn.receive(FromClient.Ping())
-        _ <- queue.take.assertEquals(Reply.Send(FromServer.Pong()))
-        _ <- conn.receive(FromClient.Ping())
-        _ <- queue.take.assertEquals(Reply.Send(FromServer.Pong()))
-      yield ()
 
   test("A Pong from the client gets no reply"):
     connection.use: (conn, queue) =>

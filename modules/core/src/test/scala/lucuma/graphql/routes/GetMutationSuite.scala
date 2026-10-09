@@ -63,67 +63,40 @@ class GetMutationSuite extends BaseSuite:
   val graphQLService: GraphQLService[IO] =
     GraphQLService.unvalidated(GetMutationMapping)
 
-  // Issue a real HTTP GET to the /graphql endpoint, bypassing the FetchClient
-  // (which always POSTs). Returns the response status and the Allow header, if
-  // present. Both are extracted inside `use` so the response body is never
-  // needed after the resource is released.
-  private def rawGet(
+  // GET the document, with the operation name when given. Returns the status, the headers and
+  // the parsed body.
+  private def get(
     query:         String,
     operationName: Option[String] = None
-  ): IO[(Status, Option[Allow])] =
-    val uri0 = (serverFixture().baseUri / "graphql").withQueryParam("query", query)
-    val uri1 = operationName.fold(uri0)(n => uri0.withQueryParam("operationName", n))
-    httpClientFixture()
-      .run(Request[IO](Method.GET, uri1))
-      .use(resp => IO.pure((resp.status, resp.headers.get[Allow])))
+  ): IO[(Status, Headers, Json)] =
+    rawResponse: uri =>
+      val uri0 = uri.withQueryParam("query", query)
+      Request[IO](Method.GET, operationName.fold(uri0)(n => uri0.withQueryParam("operationName", n)))
+    .map((status, headers, text) => (status, headers, parser.parse(text).getOrElse(Json.Null)))
 
   private val mutationDoc = "mutation { increment }"
-  private val queryDoc    = "query { ping }"
   // A document that contains both a query and a mutation operation, so we can
   // verify that the operation-name selector is what matters, not the document.
   private val mixedDoc    = "query Ping { ping } mutation Inc { increment }"
 
-  // --- core correctness: mutation on GET must be rejected -----
-
-  test("GET a mutation returns 405 Method Not Allowed"):
-    rawGet(mutationDoc).map { (status, _) =>
+  // The specification requires status 405, the `Allow` header, and a well-formed GraphQL
+  // response body with the GraphQL media type.
+  test("GET a mutation returns 405 with Allow: POST and a GraphQL errors body"):
+    get(mutationDoc).map: (status, headers, body) =>
       assertEquals(status, Status.MethodNotAllowed)
-    }
-
-  test("GET a mutation response includes Allow: POST"):
-    rawGet(mutationDoc).map { (_, allow) =>
-      assertEquals(allow, Some(Allow(Method.POST)))
-    }
-
-  // The specification requires a well-formed GraphQL response body with the GraphQL media type.
-  test("GET a mutation response carries a GraphQL errors body"):
-    rawResponse(uri => Request[IO](Method.GET, uri.withQueryParam("query", mutationDoc)))
-      .map { (_, headers, text) =>
-        val contentType = headers.get[`Content-Type`].map(_.mediaType)
-        assertEquals(contentType, `application/graphql-response+json`.some)
-        val body   = parser.parse(text).getOrElse(Json.Null)
-        val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
-        assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
-        assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
-      }
+      assertEquals(headers.get[Allow], Some(Allow(Method.POST)))
+      assertEquals(headers.get[`Content-Type`].map(_.mediaType), `application/graphql-response+json`.some)
+      val errors = body.hcursor.downField("errors").as[List[Json]].getOrElse(Nil)
+      assert(errors.nonEmpty, s"Expected an errors list, got: ${body.spaces2}")
+      assert(!body.hcursor.downField("data").succeeded, s"Expected no data, got: ${body.spaces2}")
 
   // This is the most important assertion: the mutation side-effect must NOT
   // happen when the request is rejected at the HTTP layer.
   test("GET a mutation does not execute the mutation side effect"):
     val before = GetMutationMapping.counter.get()
-    rawGet(mutationDoc).map { _ =>
+    get(mutationDoc).map: _ =>
       assertEquals(GetMutationMapping.counter.get(), before,
         "Counter must not change when a mutation is rejected via GET")
-    }
-
-  // --- regression: query over GET must still work ----------------
-
-  test("GET a query still returns 200 OK"):
-    rawGet(queryDoc).map { (status, _) =>
-      assertEquals(status, Status.Ok)
-    }
-
-  // --- regression: mutation over POST must still execute ---------
 
   test("POST a mutation still executes and returns 200"):
     val before = GetMutationMapping.counter.get()
@@ -140,12 +113,10 @@ class GetMutationSuite extends BaseSuite:
   // --- mixed document: operation-name selection --------------------
 
   test("GET a query operation from a mixed document succeeds"):
-    rawGet(mixedDoc, Some("Ping")).map { (status, _) =>
+    get(mixedDoc, Some("Ping")).map: (status, _, _) =>
       assertEquals(status, Status.Ok)
-    }
 
   test("GET a mutation operation from a mixed document returns 405"):
-    rawGet(mixedDoc, Some("Inc")).map { (status, allow) =>
+    get(mixedDoc, Some("Inc")).map: (status, headers, _) =>
       assertEquals(status, Status.MethodNotAllowed)
-      assertEquals(allow, Some(Allow(Method.POST)))
-    }
+      assertEquals(headers.get[Allow], Some(Allow(Method.POST)))

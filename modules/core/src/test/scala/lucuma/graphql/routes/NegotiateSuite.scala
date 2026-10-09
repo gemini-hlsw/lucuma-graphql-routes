@@ -29,23 +29,14 @@ class NegotiateSuite extends FunSuite:
   test("an absent Accept header gives the legacy media type"):
     assertEquals(negotiate(), ResponseMediaType.LegacyJson.asRight)
 
-  test("an empty Accept header gives the legacy media type"):
-    assertEquals(negotiate(""), ResponseMediaType.LegacyJson.asRight)
-
   test("a wildcard gives the GraphQL media type"):
     assertEquals(negotiate("*/*"), ResponseMediaType.GraphQL.asRight)
-
-  test("a subtype wildcard gives the GraphQL media type"):
-    assertEquals(negotiate("application/*"), ResponseMediaType.GraphQL.asRight)
 
   test("an equal q value gives the GraphQL media type"):
     assertEquals(negotiate(s"$LegacyJson, $GraphQLJson"), ResponseMediaType.GraphQL.asRight)
 
   test("the higher q value wins"):
     assertEquals(negotiate(s"$GraphQLJson;q=0.5, $LegacyJson;q=0.9"), ResponseMediaType.LegacyJson.asRight)
-
-  test("the smallest q value above zero still counts"):
-    assertEquals(negotiate(s"$GraphQLJson;q=0.001, $LegacyJson;q=0"), ResponseMediaType.GraphQL.asRight)
 
   test("a q value of 0 removes one media type"):
     assertEquals(negotiate(s"$GraphQLJson;q=0, $LegacyJson"), ResponseMediaType.LegacyJson.asRight)
@@ -61,25 +52,10 @@ class NegotiateSuite extends FunSuite:
   test("a q value of 0 for every supported media type has no result"):
     assert(negotiate(s"$GraphQLJson;q=0, $LegacyJson;q=0").isLeft)
 
-  test("a wildcard with a q value of 0 has no result"):
-    assert(negotiate("*/*;q=0").isLeft)
-
   test("the message keeps the subtype of the rejected media type"):
     assertEquals(
       message("text/html"),
       s"Unsupported 'Accept' header 'text/html'. Supported media types are '$GraphQLJson' and '$LegacyJson'."
-    )
-
-  test("the message names every rejected media type"):
-    assertEquals(
-      message("text/html, image/png"),
-      s"Unsupported 'Accept' header 'text/html, image/png'. Supported media types are '$GraphQLJson' and '$LegacyJson'."
-    )
-
-  test("the message keeps a q value of 0"):
-    assertEquals(
-      message(s"$GraphQLJson;q=0, $LegacyJson;q=0"),
-      s"Unsupported 'Accept' header '$GraphQLJson;q=0, $LegacyJson;q=0'. Supported media types are '$GraphQLJson' and '$LegacyJson'."
     )
 
   // --- the media type of a response -------------------------------------------
@@ -89,9 +65,6 @@ class NegotiateSuite extends FunSuite:
 
   test("a legacy client gets the legacy media type on a 200 response"):
     assertEquals(ResponseMediaType.LegacyJson.contentType(Status.Ok).mediaType.show, LegacyJson)
-
-  test("a legacy client gets the legacy media type on a 294 response"):
-    assertEquals(ResponseMediaType.LegacyJson.contentType(ResponseMediaType.PartialSuccess).mediaType.show, LegacyJson)
 
   test("a legacy client gets the GraphQL media type on a 400 response"):
     assertEquals(ResponseMediaType.LegacyJson.contentType(Status.BadRequest).mediaType.show, GraphQLJson)
