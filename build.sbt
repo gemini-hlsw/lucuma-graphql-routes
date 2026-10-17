@@ -46,6 +46,7 @@ lazy val core = project
       "org.typelevel" %% "cats-effect-testkit"         % catsEffectVersion          % Test,
       "org.typelevel" %% "grackle-circe"               % grackleVersion             % Test,
       "org.typelevel" %% "log4cats-slf4j"              % log4catsVersion            % Test,
-      "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test
+      "org.typelevel" %% "munit-cats-effect"           % munitCatsEffectVersion     % Test,
+      "org.typelevel" %% "otel4s-oteljava-testkit"     % otel4sVersion              % Test
     ),
   )

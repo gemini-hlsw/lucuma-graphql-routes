@@ -17,8 +17,10 @@ import grackle.ValidationFailure.Severity
 import io.circe.Json
 import io.circe.JsonObject
 import org.typelevel.otel4s.Attribute
+import org.typelevel.otel4s.AttributeKey
 import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.semconv.experimental.attributes.GraphqlExperimentalAttributes.*
+import org.typelevel.otel4s.trace.Span
 import org.typelevel.otel4s.trace.SpanKind
 import org.typelevel.otel4s.trace.Tracer
 
@@ -56,11 +58,18 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def parses(document: String): Boolean =
     mapping.graphQLParser.parseText(document).hasValue
 
-  private val MaxDocumentLength = 1024
+  private val MaxDocumentLength     = 1024
+  private val MaxFullDocumentLength = 64 * 1024
+
+  private def truncate(doc: String, max: Int): String =
+    if doc.length <= max then doc
+    else s"${doc.take(max)}... (truncated at $max of ${doc.length} chars)"
 
   private def truncateDocument(doc: String): String =
-    if doc.length <= MaxDocumentLength then doc
-    else s"${doc.take(MaxDocumentLength)}... (truncated at $MaxDocumentLength of ${doc.length} chars)"
+    truncate(doc, MaxDocumentLength)
+
+  private def recordFullDocument(span: Span[F], document: String): F[Unit] =
+    span.addAttribute(Attribute(GraphQLService.FullDocumentKey, truncate(document, MaxFullDocumentLength)))
 
   // OTEL attributes for a GraphQL operation; see
   // https://opentelemetry.io/docs/specs/semconv/graphql/graphql-spans/
@@ -93,14 +102,20 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
       .withSpanKind(SpanKind.Server)
       .addAttributes(graphqlAttributes(ctx, op, document, operationName))
       .build
-      .surround:
-        runInterpreter(ctx, op).compile.toList.map {
-          case List(e) => e
-          case other   =>
-            Result.internalError(
-              GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
-            )
-        }
+      .use: span =>
+        runInterpreter(ctx, op).compile.toList
+          .map {
+            case List(e) => e
+            case other   =>
+              Result.internalError(
+                GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
+              )
+          }
+          .flatTap {
+            case Result.InternalError(_) => recordFullDocument(span, document)
+            case _                       => ().pure[F]
+          }
+          .onError { case _ => recordFullDocument(span, document) }
 
   def subscribe(
     ctx:           RequestContext,
@@ -111,7 +126,10 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
     // Decorate the current span with GraphQL semantic attributes.
     Stream.exec(
       T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(ctx, op, document, operationName)))
-    ) ++ runInterpreter(ctx, op)
+    ) ++ runInterpreter(ctx, op).evalTap {
+      case Result.InternalError(_) => T.withCurrentSpanOrNoop(recordFullDocument(_, document))
+      case _                       => ().pure[F]
+    }
 
   private def runInterpreter(ctx: RequestContext, op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, ctx.env)
@@ -119,6 +137,9 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
 }
 
 object GraphQLService {
+
+  /** The full document of an operation that ended in an internal error, capped at 64 KB. */
+  val FullDocumentKey: AttributeKey[String] = AttributeKey("graphql.document.full")
 
   /**
    * Builds a service and validates its mapping. It raises `ValidationException` in F when the
