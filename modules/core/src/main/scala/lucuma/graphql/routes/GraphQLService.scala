@@ -5,7 +5,9 @@ package lucuma.graphql.routes
 
 import cats.MonadThrow
 import cats.data.NonEmptyChain
+import cats.effect.Resource.ExitCase
 import cats.syntax.all.*
+import cats.~>
 import fs2.Compiler
 import fs2.Stream
 import grackle.Mapping
@@ -22,6 +24,7 @@ import org.typelevel.otel4s.Attributes
 import org.typelevel.otel4s.semconv.experimental.attributes.GraphqlExperimentalAttributes.*
 import org.typelevel.otel4s.trace.Span
 import org.typelevel.otel4s.trace.SpanKind
+import org.typelevel.otel4s.trace.StatusCode
 import org.typelevel.otel4s.trace.Tracer
 
 class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
@@ -123,13 +126,30 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
     document:      String,
     operationName: Option[String] = None
   ): Stream[F, Result[Json]] =
-    // Decorate the current span with GraphQL semantic attributes.
-    Stream.exec(
-      T.withCurrentSpanOrNoop(_.addAttributes(graphqlAttributes(ctx, op, document, operationName)))
-    ) ++ runInterpreter(ctx, op).evalTap {
-      case Result.InternalError(_) => T.withCurrentSpanOrNoop(recordFullDocument(_, document))
-      case _                       => ().pure[F]
-    }
+    // The span lives as long as the stream. It is unmanaged because `Stream.resource` needs a
+    // `MonadCancel`, which this class does not require.
+    Stream
+      .eval(
+        T.spanBuilder("graphql")
+          .withSpanKind(SpanKind.Server)
+          .addAttributes(graphqlAttributes(ctx, op, document, operationName))
+          .build
+          .startUnmanaged
+      )
+      .flatMap: span =>
+        runInterpreter(ctx, op)
+          .evalTap {
+            case Result.InternalError(_) => recordFullDocument(span, document)
+            case _                       => ().pure[F]
+          }
+          .translate(new (F ~> F) {
+            def apply[A](fa: F[A]): F[A] = T.childScope(span.context)(fa)
+          })
+          .onFinalizeCase {
+            case ExitCase.Errored(e) =>
+              span.recordException(e) >> span.setStatus(StatusCode.Error) >> span.end
+            case _                   => span.end
+          }
 
   private def runInterpreter(ctx: RequestContext, op: Operation): Stream[F, Result[Json]] =
     mapping.interpreter.run(op.query, op.rootTpe, ctx.env)

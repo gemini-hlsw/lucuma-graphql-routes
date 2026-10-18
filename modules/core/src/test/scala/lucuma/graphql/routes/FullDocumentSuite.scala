@@ -5,6 +5,7 @@ package lucuma.graphql.routes
 
 import cats.effect.IO
 import cats.effect.Resource
+import fs2.Stream
 import grackle.Result
 import grackle.circe.CirceMapping
 import grackle.syntax.*
@@ -21,13 +22,18 @@ import org.typelevel.otel4s.trace.Tracer
 object OutcomeMapping extends CirceMapping[IO]:
   val schema       = schema"""
     type Query { ok: String!, broken: String!, throws: String! }
+    type Subscription { broken: String! }
   """
-  val QueryType    = schema.ref("Query")
+  val QueryType        = schema.ref("Query")
+  val SubscriptionType = schema.ref("Subscription")
   val typeMappings = TypeMappings.unchecked(
     ObjectMapping(QueryType, List(
       RootEffect.computeJson("ok")((_, _) => IO.pure(Result(Json.fromString("ok")))),
       RootEffect.computeJson("broken")((_, _) => IO.pure(Result.internalError("boom"))),
       RootEffect.computeJson("throws")((_, _) => IO.raiseError(new RuntimeException("boom")))
+    )),
+    ObjectMapping(SubscriptionType, List(
+      RootStream.computeJson("broken")((_, _) => Stream.emit(Result.internalError("boom")))
     ))
   )
 
@@ -40,14 +46,17 @@ class FullDocumentSuite extends CatsEffectSuite:
     given LocalProvider[IO, Context] = LocalProvider.fromLiftIO[IO, Context]
     TracesTestkit.inMemory[IO]()
 
-  // Runs `document` and returns the finished `graphql` span.
+  // Runs `document` with no enclosing span and returns the finished `graphql` span.
   private def run(document: String): IO[SpanData] =
     testkit.use: tk =>
       for
         given Tracer[IO] <- tk.tracerProvider.get("test")
         service           = GraphQLService.unvalidated(OutcomeMapping)
         op                = service.parse(RequestContext.empty, document, None, None).toOption.get
-        _                <- service.query(RequestContext.empty, op, document).attempt
+        _                <-
+          if service.isSubscription(op) then
+            service.subscribe(RequestContext.empty, op, document).compile.drain.attempt
+          else service.query(RequestContext.empty, op, document).attempt
         spans            <- tk.finishedSpans
       yield spans.find(_.getName == "graphql").get
 
@@ -64,4 +73,10 @@ class FullDocumentSuite extends CatsEffectSuite:
   test("A thrown exception carries the full document."):
     val doc = "query { throws }"
     run(doc).map: span =>
+      assertEquals(span.getAttributes.get(FullDocument), doc)
+
+  test("A subscription opens its own span, which carries the full document on an error."):
+    val doc = "subscription { broken }"
+    run(doc).map: span =>
+      assertEquals(span.getAttributes.get(Document), doc)
       assertEquals(span.getAttributes.get(FullDocument), doc)
