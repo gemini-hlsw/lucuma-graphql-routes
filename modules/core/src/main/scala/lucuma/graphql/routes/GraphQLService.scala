@@ -68,9 +68,6 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
     if doc.length <= max then doc
     else s"${doc.take(max)}... (truncated at $max of ${doc.length} chars)"
 
-  private def truncateDocument(doc: String): String =
-    truncate(doc, MaxDocumentLength)
-
   private def recordFullDocument(span: Span[F], document: String): F[Unit] =
     span.addAttribute(Attribute(GraphQLService.FullDocumentKey, truncate(document, MaxFullDocumentLength)))
 
@@ -89,7 +86,7 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
 
     Attributes(
       (List(
-        Attribute(GraphqlDocument, truncateDocument(document)),
+        Attribute(GraphqlDocument, truncate(document, MaxDocumentLength)),
         Attribute(GraphqlOperationType, opType),
       ) ++ operationName.map(Attribute(GraphqlOperationName, _)))*
     ) ++ ctx.attributes
@@ -159,7 +156,7 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
 
 object GraphQLService {
 
-  /** The full document of an operation that ended in an internal error, capped at 64 KB. */
+  /** The full document of an operation that ended in an internal error, capped at 64K characters. */
   val FullDocumentKey: AttributeKey[String] = AttributeKey("graphql.document.full")
 
   /**
