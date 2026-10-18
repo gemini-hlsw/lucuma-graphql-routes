@@ -22,7 +22,7 @@ import org.typelevel.otel4s.trace.Tracer
 object OutcomeMapping extends CirceMapping[IO]:
   val schema       = schema"""
     type Query { ok: String!, broken: String!, throws: String! }
-    type Subscription { broken: String! }
+    type Subscription { broken: String!, throws: String! }
   """
   val QueryType        = schema.ref("Query")
   val SubscriptionType = schema.ref("Subscription")
@@ -33,7 +33,8 @@ object OutcomeMapping extends CirceMapping[IO]:
       RootEffect.computeJson("throws")((_, _) => IO.raiseError(new RuntimeException("boom")))
     )),
     ObjectMapping(SubscriptionType, List(
-      RootStream.computeJson("broken")((_, _) => Stream.emit(Result.internalError("boom")))
+      RootStream.computeJson("broken")((_, _) => Stream.emit(Result.internalError("boom"))),
+      RootStream.computeJson("throws")((_, _) => Stream.raiseError(new RuntimeException("boom")))
     ))
   )
 
@@ -79,4 +80,9 @@ class FullDocumentSuite extends CatsEffectSuite:
     val doc = "subscription { broken }"
     run(doc).map: span =>
       assertEquals(span.getAttributes.get(Document), doc)
+      assertEquals(span.getAttributes.get(FullDocument), doc)
+
+  test("A subscription that raises carries the full document."):
+    val doc = "subscription { throws }"
+    run(doc).map: span =>
       assertEquals(span.getAttributes.get(FullDocument), doc)

@@ -147,7 +147,8 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
           })
           .onFinalizeCase {
             case ExitCase.Errored(e) =>
-              span.recordException(e) >> span.setStatus(StatusCode.Error) >> span.end
+              recordFullDocument(span, document) >> span.recordException(e) >>
+                span.setStatus(StatusCode.Error) >> span.end
             case _                   => span.end
           }
 
