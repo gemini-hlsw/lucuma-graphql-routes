@@ -22,7 +22,7 @@ extension (extensions: Option[GraphQLExtensions])
 
   private[routes] def traceCarrier: Map[String, String] =
     extensions.fold(Map.empty):
-      _.toIterable.flatMap((k, v) => v.asString.filter(_.nonEmpty).map(k -> _)).toMap
+      _.toMap.flatMap((k, v) => v.asString.filter(_.nonEmpty).map(k -> _))
 
 // Only join a remote context when the client sent one. Otherwise keep the current span context.
 private[routes] def joinRemote[F[_]: {Tracer as T}, A](extensions: Option[GraphQLExtensions])(fa: F[A]): F[A] =
@@ -32,7 +32,10 @@ private[routes] def joinRemote[F[_]: {Tracer as T}, A](extensions: Option[GraphQ
 def mkGraphqlError(p: Problem): GraphQLError =
   GraphQLError(
     p.message,
-    NonEmptyList.fromList(p.path.map(GraphQLError.PathElement.string)),
+    NonEmptyList.fromList(p.path.map({
+      case Problem.PathSegment.Name(n)  =>  GraphQLError.PathElement.string(n)
+      case Problem.PathSegment.Index(i) => GraphQLError.PathElement.int(i)
+    })),
     NonEmptyList.fromList(p.locations.map(GraphQLError.Location(_, _))),
     p.extensions
   )
