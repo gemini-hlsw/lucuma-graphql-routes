@@ -92,12 +92,16 @@ class ResponseStatusSuite extends BaseSuite:
 
   // --- partial success --------------------------------------------------------
 
-  // Grackle reports a field error as a null `data` entry. The `data` entry is present, so the
-  // specification asks for status 294 and forbids a 4xx or 5xx status.
-  test("a field error returns 294 with a null data entry"):
+  // Grackle reports a field error on a nullable field as a null value for that field. The `data`
+  // entry is present, so the specification asks for status 294 and forbids a 4xx or 5xx status.
+  test("a field error returns 294 with a null field value"):
     post("query { nullableFail }").map: (status, _, body) =>
       assertEquals(status.code, 294)
-      assert(hasNullData(body), body.spaces2)
+      assertEquals(
+        body.hcursor.downField("data").downField("nullableFail").focus,
+        Some(Json.Null),
+        body.spaces2
+      )
       assert(hasErrors(body), body.spaces2)
 
   // A field error next to a field that succeeds still gives status 294.
