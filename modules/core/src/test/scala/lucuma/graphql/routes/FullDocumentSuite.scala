@@ -5,6 +5,7 @@ package lucuma.graphql.routes
 
 import cats.effect.IO
 import cats.effect.Resource
+import cats.syntax.option.*
 import fs2.Stream
 import grackle.Result
 import grackle.circe.CirceMapping
@@ -18,10 +19,12 @@ import org.typelevel.otel4s.oteljava.context.Context
 import org.typelevel.otel4s.oteljava.testkit.trace.TracesTestkit
 import org.typelevel.otel4s.trace.Tracer
 
-// Fields that end three ways: fine, with an internal error result, and with a thrown exception.
+import scala.concurrent.duration.*
+
+// Fields that end four ways: fine, slowly, with an internal error result, and with a thrown exception.
 object OutcomeMapping extends CirceMapping[IO]:
   val schema       = schema"""
-    type Query { ok: String!, broken: String!, throws: String! }
+    type Query { ok: String!, slow: String!, broken: String!, throws: String! }
     type Subscription { broken: String!, throws: String! }
   """
   val QueryType        = schema.ref("Query")
@@ -29,6 +32,7 @@ object OutcomeMapping extends CirceMapping[IO]:
   val typeMappings = TypeMappings.unchecked(
     ObjectMapping(QueryType, List(
       RootEffect.computeJson("ok")((_, _) => IO.pure(Result(Json.fromString("ok")))),
+      RootEffect.computeJson("slow")((_, _) => IO.sleep(50.millis).as(Result(Json.fromString("ok")))),
       RootEffect.computeJson("broken")((_, _) => IO.pure(Result.internalError("boom"))),
       RootEffect.computeJson("throws")((_, _) => IO.raiseError(new RuntimeException("boom")))
     )),
@@ -48,11 +52,14 @@ class FullDocumentSuite extends CatsEffectSuite:
     TracesTestkit.inMemory[IO]()
 
   // Runs `document` with no enclosing span and returns the finished `graphql` span.
-  private def run(document: String): IO[SpanData] =
+  private def run(
+    document:       String,
+    slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter
+  ): IO[SpanData] =
     testkit.use: tk =>
       for
         given Tracer[IO] <- tk.tracerProvider.get("test")
-        service           = GraphQLService.unvalidated(OutcomeMapping)
+        service           = GraphQLService.unvalidated(OutcomeMapping, slowQueryAfter)
         op                = service.parse(RequestContext.empty, document, None, None).toOption.get
         _                <-
           if service.isSubscription(op) then
@@ -64,6 +71,19 @@ class FullDocumentSuite extends CatsEffectSuite:
   test("A successful operation carries only the truncated document."):
     run("query { ok }").map: span =>
       assertEquals(span.getAttributes.get(Document), "query { ok }")
+      assertEquals(Option(span.getAttributes.get(FullDocument)), None)
+
+  test("A query at or over the slow threshold carries the full document."):
+    val doc = "query { slow }"
+    run(doc, 10.millis.some).map: span =>
+      assertEquals(span.getAttributes.get(FullDocument), doc)
+
+  test("A query under the slow threshold carries only the truncated document."):
+    run("query { slow }", 10.seconds.some).map: span =>
+      assertEquals(Option(span.getAttributes.get(FullDocument)), None)
+
+  test("A slow query with no threshold carries only the truncated document."):
+    run("query { slow }", none).map: span =>
       assertEquals(Option(span.getAttributes.get(FullDocument)), None)
 
   test("An internal error result carries the full document."):
