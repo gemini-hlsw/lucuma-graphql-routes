@@ -58,6 +58,16 @@ class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
       env                = ctx.env
     )
 
+  /** `parse` under a `graphql.compile` span, so the compile time shows in the trace. */
+  def parseTraced(
+    ctx:   RequestContext,
+    query: String,
+    op:    Option[String],
+    vars:  Option[JsonObject],
+    level: IntrospectionLevel = IntrospectionLevel.Full
+  ): F[Result[Operation]] =
+    T.span("graphql.compile").surround(MonadThrow[F].unit.map(_ => parse(ctx, query, op, vars, level)))
+
   /**
    * True if the GraphQL document parses. The HTTP routes use this to tell a syntax error, which
    * gives status 400, from a validation error, which gives status 422.

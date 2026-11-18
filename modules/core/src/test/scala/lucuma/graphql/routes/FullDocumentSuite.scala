@@ -86,6 +86,17 @@ class FullDocumentSuite extends CatsEffectSuite:
     run("query { slow }", none).map: span =>
       assertEquals(Option(span.getAttributes.get(FullDocument)), None)
 
+  test("parseTraced compiles under a graphql.compile span."):
+    testkit.use: tk =>
+      for
+        given Tracer[IO] <- tk.tracerProvider.get("test")
+        service           = GraphQLService.unvalidated(OutcomeMapping)
+        parsed           <- service.parseTraced(RequestContext.empty, "query { ok }", None, None)
+        spans            <- tk.finishedSpans
+      yield
+        assert(parsed.hasValue)
+        assertEquals(spans.map(_.getName), List("graphql.compile"))
+
   test("An internal error result carries the full document."):
     val doc = "query { broken }"
     run(doc).map: span =>
