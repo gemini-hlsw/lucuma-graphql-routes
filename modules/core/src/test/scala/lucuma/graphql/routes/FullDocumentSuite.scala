@@ -54,7 +54,7 @@ class FullDocumentSuite extends CatsEffectSuite:
   // Runs `document` with no enclosing span and returns the finished `graphql` span.
   private def run(
     document:       String,
-    slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter
+    slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter.some
   ): IO[SpanData] =
     testkit.use: tk =>
       for

@@ -32,7 +32,7 @@ import scala.concurrent.duration.*
 
 class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
   val mapping:        Mapping[F],
-  val slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter
+  val slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter.some
 )(using Compiler[F, F]) {
 
   def isSubscription(op: Operation): Boolean =
@@ -182,7 +182,7 @@ object GraphQLService {
    */
   val FullDocumentKey: AttributeKey[String] = AttributeKey("graphql.document.full")
 
-  val DefaultSlowQueryAfter: Option[FiniteDuration] = Some(2.seconds)
+  val DefaultSlowQueryAfter: FiniteDuration = 2.seconds
 
   /**
    * Builds a service and validates its mapping. It raises `ValidationException` in F when the
@@ -191,7 +191,7 @@ object GraphQLService {
   def apply[F[_]: {MonadThrow, Clock, Tracer}](
     mapping:        Mapping[F],
     severity:       Severity = Severity.Warning,
-    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter
+    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter.some
   )(using Compiler[F, F]): F[GraphQLService[F]] =
     mapping.validateInto[F](severity) *>
       MonadThrow[F]
@@ -204,7 +204,7 @@ object GraphQLService {
    */
   def unvalidated[F[_]: {MonadThrow, Clock, Tracer}](
     mapping:        Mapping[F],
-    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter
+    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter.some
   )(using Compiler[F, F]): GraphQLService[F] =
     new GraphQLService[F](mapping, slowQueryAfter)
 
