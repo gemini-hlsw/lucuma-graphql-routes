@@ -308,7 +308,7 @@ object Connection {
                 Option.unless(added)(GraphQLWSError.SubscriberAlreadyExists(id))
 
       val action: F[Option[GraphQLWSError]] =
-        service.parseTraced(ctx, document, name, request.variables, level).flatMap {
+        service.parse(ctx, document, name, request.variables, level).flatMap {
           case Success(op)        => add(op)
           case Warning(_, op)     => add(op) // n.b. warnings on start are lost
           case Failure(ps)        =>

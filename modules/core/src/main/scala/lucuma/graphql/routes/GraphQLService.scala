@@ -41,13 +41,12 @@ class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
   def isMutation(op: Operation): Boolean =
     mapping.schema.mutationType.exists(_ =:= op.rootTpe)
 
-  /** Compiles a document. `ctx.env` reaches every elaborator, and `level` gates introspection. */
-  def parse(
+  private def compile(
     ctx:   RequestContext,
     query: String,
     op:    Option[String],
     vars:  Option[JsonObject],
-    level: IntrospectionLevel = IntrospectionLevel.Full
+    level: IntrospectionLevel
   ): Result[Operation] =
     mapping.compiler.compile(
       query,
@@ -58,15 +57,18 @@ class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
       env                = ctx.env
     )
 
-  /** `parse` under a `graphql.compile` span, so the compile time shows in the trace. */
-  def parseTraced(
+  /**
+   * Compiles a document under a `graphql.compile` span. `ctx.env` reaches every elaborator, and
+   * `level` gates introspection.
+   */
+  def parse(
     ctx:   RequestContext,
     query: String,
     op:    Option[String],
     vars:  Option[JsonObject],
     level: IntrospectionLevel = IntrospectionLevel.Full
   ): F[Result[Operation]] =
-    T.span("graphql.compile").surround(MonadThrow[F].unit.map(_ => parse(ctx, query, op, vars, level)))
+    T.span("graphql.compile").surround(MonadThrow[F].unit.map(_ => compile(ctx, query, op, vars, level)))
 
   /**
    * True if the GraphQL document parses. The HTTP routes use this to tell a syntax error, which

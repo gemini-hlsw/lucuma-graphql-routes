@@ -60,7 +60,7 @@ class FullDocumentSuite extends CatsEffectSuite:
       for
         given Tracer[IO] <- tk.tracerProvider.get("test")
         service           = GraphQLService.unvalidated(OutcomeMapping, slowQueryAfter)
-        op                = service.parse(RequestContext.empty, document, None, None).toOption.get
+        op               <- service.parse(RequestContext.empty, document, None, None).map(_.toOption.get)
         _                <-
           if service.isSubscription(op) then
             service.subscribe(RequestContext.empty, op, document).compile.drain.attempt
@@ -86,12 +86,12 @@ class FullDocumentSuite extends CatsEffectSuite:
     run("query { slow }", none).map: span =>
       assertEquals(Option(span.getAttributes.get(FullDocument)), None)
 
-  test("parseTraced compiles under a graphql.compile span."):
+  test("parse compiles under a graphql.compile span."):
     testkit.use: tk =>
       for
         given Tracer[IO] <- tk.tracerProvider.get("test")
         service           = GraphQLService.unvalidated(OutcomeMapping)
-        parsed           <- service.parseTraced(RequestContext.empty, "query { ok }", None, None)
+        parsed           <- service.parse(RequestContext.empty, "query { ok }", None, None)
         spans            <- tk.finishedSpans
       yield
         assert(parsed.hasValue)

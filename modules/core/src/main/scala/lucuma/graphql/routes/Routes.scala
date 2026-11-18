@@ -318,7 +318,7 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       // the errors of both parameters.
       errors => errorResponse(UnprocessableContent, errors.map(_.sanitized)),
       (vars, exts) =>
-        joinRemote(exts)(service.parseTraced(context, query, op, vars, level)).flatMap: parsed =>
+        joinRemote(exts)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
           rejectSubscription(parsed) {
             parsed match {
               // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
@@ -375,7 +375,7 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
     request.fold(
       messages => errorResponse(UnprocessableContent, messages),
       (query, op, vars, ext) =>
-        joinRemote(ext)(service.parseTraced(context, query, op, vars, level)).flatMap: parsed =>
+        joinRemote(ext)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
           rejectSubscription(parsed) {
             execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
           }

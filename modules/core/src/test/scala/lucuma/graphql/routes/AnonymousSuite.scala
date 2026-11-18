@@ -93,8 +93,8 @@ class AnonymousSuite extends BaseSuite:
     GraphQLService.unvalidated[IO](IntrospectionMapping[IO](TestMapping.schema))
 
   // Compiles the document with the introspection mapping and asserts the message of the refusal.
-  private def assertRejects(query: String, message: String): Unit =
-    introspectionOnly.parse(RequestContext.empty, query, None, None) match
+  private def assertRejects(query: String, message: String): IO[Unit] =
+    introspectionOnly.parse(RequestContext.empty, query, None, None).map:
       case Result.Failure(ps) => assertEquals(ps.head.message, message)
       case other              => fail(s"Expected a failure, got $other")
 
