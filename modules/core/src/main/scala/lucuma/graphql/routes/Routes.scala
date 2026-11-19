@@ -317,18 +317,17 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       // GraphQL-over-HTTP request. The specification asks for status 422. The response reports
       // the errors of both parameters.
       errors => errorResponse(UnprocessableContent, errors.map(_.sanitized)),
-      (vars, exts) => {
-        val parsed = service.parse(context, query, op, vars, level)
-        rejectSubscription(parsed) {
-          parsed match {
-            // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
-            case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
-            case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
-            // Re-parent server spans on the remote context in `extensions`, as POST does.
-            case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(context, p, query, op)))
+      (vars, exts) =>
+        joinRemote(exts)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
+          rejectSubscription(parsed) {
+            parsed match {
+              // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
+              case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
+              case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
+              // Re-parent server spans on the remote context in `extensions`, as POST does.
+              case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(context, p, query, op)))
+            }
           }
-        }
-      }
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
@@ -375,12 +374,11 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
 
     request.fold(
       messages => errorResponse(UnprocessableContent, messages),
-      (query, op, vars, ext) => {
-        val parsed = service.parse(context, query, op, vars, level)
-        rejectSubscription(parsed) {
-          execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
-        }
-      }
+      (query, op, vars, ext) =>
+        joinRemote(ext)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
+          rejectSubscription(parsed) {
+            execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
+          }
     )
   }
 

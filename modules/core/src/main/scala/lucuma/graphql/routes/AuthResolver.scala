@@ -4,6 +4,7 @@
 package lucuma.graphql.routes
 
 import cats.MonadThrow
+import cats.effect.Clock
 import cats.syntax.all.*
 import fs2.Compiler
 import org.http4s.headers.Authorization
@@ -13,7 +14,7 @@ import org.typelevel.otel4s.trace.Tracer
  * Turns the result of authentication into the service and the context that run the operation. The
  * HTTP routes and the web socket share one instance, so the introspection service is built once.
  */
-private[routes] class AuthResolver[F[_]: {MonadThrow, Tracer}](
+private[routes] class AuthResolver[F[_]: {MonadThrow, Clock, Tracer}](
   service:       GraphQLService[F],
   authenticator: Authenticator[F],
   val config:    RoutesConfig

@@ -5,6 +5,7 @@ package lucuma.graphql.routes
 
 import cats.MonadThrow
 import cats.data.NonEmptyChain
+import cats.effect.Clock
 import cats.effect.Resource.ExitCase
 import cats.syntax.all.*
 import cats.~>
@@ -27,8 +28,20 @@ import org.typelevel.otel4s.trace.SpanKind
 import org.typelevel.otel4s.trace.StatusCode
 import org.typelevel.otel4s.trace.Tracer
 
-class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
-  val mapping: Mapping[F]
+import scala.concurrent.duration.*
+
+/**
+ * Runs GraphQL operations against `mapping` under otel4s spans.
+ *
+ * @param slowQueryAfter
+ *   when a query or mutation takes this long or longer, its `graphql` span gets the full document
+ *   under `FullDocumentKey`, so slow operations can be reproduced. The time covers execution
+ *   only, not compilation. Subscriptions are never timed. `None` turns this off. Internal errors
+ *   record the full document either way.
+ */
+class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
+  val mapping:        Mapping[F],
+  val slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter.some
 )(using Compiler[F, F]) {
 
   def isSubscription(op: Operation): Boolean =
@@ -37,13 +50,12 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
   def isMutation(op: Operation): Boolean =
     mapping.schema.mutationType.exists(_ =:= op.rootTpe)
 
-  /** Compiles a document. `ctx.env` reaches every elaborator, and `level` gates introspection. */
-  def parse(
+  private def compile(
     ctx:   RequestContext,
     query: String,
     op:    Option[String],
     vars:  Option[JsonObject],
-    level: IntrospectionLevel = IntrospectionLevel.Full
+    level: IntrospectionLevel
   ): Result[Operation] =
     mapping.compiler.compile(
       query,
@@ -53,6 +65,19 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
       reportUnused       = false,
       env                = ctx.env
     )
+
+  /**
+   * Compiles a document under a `graphql.compile` span. `ctx.env` reaches every elaborator, and
+   * `level` gates introspection.
+   */
+  def parse(
+    ctx:   RequestContext,
+    query: String,
+    op:    Option[String],
+    vars:  Option[JsonObject],
+    level: IntrospectionLevel = IntrospectionLevel.Full
+  ): F[Result[Operation]] =
+    T.span("graphql.compile").surround(MonadThrow[F].unit.map(_ => compile(ctx, query, op, vars, level)))
 
   /**
    * True if the GraphQL document parses. The HTTP routes use this to tell a syntax error, which
@@ -103,17 +128,21 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
       .addAttributes(graphqlAttributes(ctx, op, document, operationName))
       .build
       .use: span =>
-        runInterpreter(ctx, op).compile.toList
-          .map {
-            case List(e) => e
-            case other   =>
-              Result.internalError(
-                GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
-              )
-          }
-          .flatTap {
-            case Result.InternalError(_) => recordFullDocument(span, document)
-            case _                       => ().pure[F]
+        Clock[F]
+          .timed(
+            runInterpreter(ctx, op).compile.toList
+              .map {
+                case List(e) => e
+                case other   =>
+                  Result.internalError(
+                    GrackleException(Problem(s"Expected exactly one result, found ${other.length}."))
+                  )
+              }
+          )
+          .flatMap {
+            case (elapsed, r) =>
+              val record = r.isInternalError || slowQueryAfter.exists(elapsed >= _)
+              recordFullDocument(span, document).whenA(record).as(r)
           }
           .onError { case _ => recordFullDocument(span, document) }
 
@@ -156,28 +185,38 @@ class GraphQLService[F[_]: {MonadThrow, Tracer as T}](
 
 object GraphQLService {
 
-  /** The full document of an operation that ended in an internal error, capped at 64K characters. */
+  /**
+   * The full document of an operation that ended in an internal error, or of a query that ran
+   * for `slowQueryAfter` or longer, capped at 64K characters.
+   */
   val FullDocumentKey: AttributeKey[String] = AttributeKey("graphql.document.full")
+
+  /** The default `slowQueryAfter`: queries at or over two seconds record their full document. */
+  val DefaultSlowQueryAfter: FiniteDuration = 2.seconds
 
   /**
    * Builds a service and validates its mapping. It raises `ValidationException` in F when the
    * mapping has a failure of `severity` or greater.
    */
-  def apply[F[_]: {MonadThrow, Tracer}](
-    mapping:  Mapping[F],
-    severity: Severity = Severity.Warning
+  def apply[F[_]: {MonadThrow, Clock, Tracer}](
+    mapping:        Mapping[F],
+    severity:       Severity = Severity.Warning,
+    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter.some
   )(using Compiler[F, F]): F[GraphQLService[F]] =
     mapping.validateInto[F](severity) *>
-      MonadThrow[F].catchNonFatal(mapping.compiler).as(new GraphQLService[F](mapping))
+      MonadThrow[F]
+        .catchNonFatal(mapping.compiler)
+        .as(new GraphQLService[F](mapping, slowQueryAfter))
 
   /**
    * Builds a service and does not validate its mapping. Use it when the caller already validated
    * the mapping on its own terms.
    */
-  def unvalidated[F[_]: {MonadThrow, Tracer}](
-    mapping: Mapping[F]
+  def unvalidated[F[_]: {MonadThrow, Clock, Tracer}](
+    mapping:        Mapping[F],
+    slowQueryAfter: Option[FiniteDuration] = DefaultSlowQueryAfter.some
   )(using Compiler[F, F]): GraphQLService[F] =
-    new GraphQLService[F](mapping)
+    new GraphQLService[F](mapping, slowQueryAfter)
 
 }
 
