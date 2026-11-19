@@ -30,6 +30,15 @@ import org.typelevel.otel4s.trace.Tracer
 
 import scala.concurrent.duration.*
 
+/**
+ * Runs GraphQL operations against `mapping` under otel4s spans.
+ *
+ * @param slowQueryAfter
+ *   when a query or mutation takes this long or longer, its `graphql` span gets the full document
+ *   under `FullDocumentKey`, so slow operations can be reproduced. The time covers execution
+ *   only, not compilation. Subscriptions are never timed. `None` turns this off. Internal errors
+ *   record the full document either way.
+ */
 class GraphQLService[F[_]: {MonadThrow, Clock, Tracer as T}](
   val mapping:        Mapping[F],
   val slowQueryAfter: Option[FiniteDuration] = GraphQLService.DefaultSlowQueryAfter.some
@@ -182,6 +191,7 @@ object GraphQLService {
    */
   val FullDocumentKey: AttributeKey[String] = AttributeKey("graphql.document.full")
 
+  /** The default `slowQueryAfter`: queries at or over two seconds record their full document. */
   val DefaultSlowQueryAfter: FiniteDuration = 2.seconds
 
   /**
