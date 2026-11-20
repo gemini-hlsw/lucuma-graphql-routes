@@ -15,7 +15,10 @@ enum Auth:
   /** The client sent no credentials. `RoutesConfig.anonymous` decides what happens. */
   case Anonymous
 
-  /** The client sent credentials that will be rejected. */
+  /**
+   * The client sent credentials that will be rejected. The routes send `message` to the client and
+   * log it at WARN, so it must not contain credentials.
+   */
   case Denied(message: String)
 
 object Auth:

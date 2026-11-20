@@ -417,7 +417,8 @@ object Connection {
 
             // Authorization header is present but malformed.
             case Some(Left(_)) =>
-              GraphQLWSError.Forbidden("Authorization property is malformed.").some.pure[F]
+              val message = "Authorization property is malformed."
+              resolver.logMalformed(message).as(GraphQLWSError.Forbidden(message).some)
 
           }
 
