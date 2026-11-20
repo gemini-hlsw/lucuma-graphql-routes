@@ -32,7 +32,6 @@ import org.http4s.circe.*
 import org.http4s.dsl.Http4sDsl
 import org.http4s.headers.Accept
 import org.http4s.headers.Allow
-import org.http4s.headers.Authorization
 import org.http4s.headers.Upgrade
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
@@ -117,7 +116,7 @@ object Routes {
     // Select the response media type, then build a handler for the authorized service.
     def withHandler(req: Request[F])(use: HttpRouteHandler[F] => F[Response[F]]): F[Response[F]] =
       warnOnce *> negotiated(req): t =>
-        resolver.resolve(req.headers.get[Authorization]).flatMap {
+        resolver.resolve(req.headers).flatMap {
           case Right((s, ctx)) => use(new HttpRouteHandler(s, ctx, config.introspection, t))
           case Left(message)   => t.errorResponse[F](Forbidden, message).pure[F]
         }
