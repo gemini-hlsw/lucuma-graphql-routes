@@ -33,6 +33,7 @@ import org.http4s.dsl.Http4sDsl
 import org.http4s.headers.Accept
 import org.http4s.headers.Allow
 import org.http4s.headers.Upgrade
+import org.http4s.headers.`Accept-Query`
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
@@ -131,6 +132,9 @@ object Routes {
     // cache must not give it to a client that sends a different `Accept` header.
     val varyAccept = Header.Raw(CIString("Vary"), "Accept")
 
+    // The methods that the GraphQL path supports.
+    val allowed = Allow(Method.GET, Method.POST, Method.QUERY, Method.OPTIONS)
+
     // A browser prefers `text/html` to the GraphQL media types. A wildcard does not count as
     // `text/html`, so a GraphQL client that sends `*/*` still reaches the GraphQL routes.
     def prefersHtml(req: Request[F]): Boolean =
@@ -187,6 +191,21 @@ object Routes {
           debug"POST one off: request=$req" *>
           withHandler(req)(_.oneOffPost(req))
 
+      // GraphQL query is embedded in a Json request body when queried via QUERY (RFC 10008). The
+      // body is the same as for POST. A cache can store the response, and the response depends
+      // on the `Accept` header.
+      case req @ QUERY -> GraphQLPath() =>
+        T.span(s"QUERY $GraphQLPath").surround:
+          debug"QUERY one off: request=$req" *>
+          withHandler(req)(_.oneOffQuery(req)).map(_.putHeaders(varyAccept))
+
+      // RFC 9110 defines OPTIONS as a request for the methods that the resource supports. The
+      // `Allow` header gives the answer. RFC 10008 uses the same response for the discovery of
+      // QUERY support, and the `Accept-Query` header gives the media types of a QUERY body.
+      case OPTIONS -> GraphQLPath() =>
+        T.span(s"OPTIONS $GraphQLPath").surround:
+          NoContent().map(_.putHeaders(allowed, `Accept-Query`(ResponseMediaType.Json)))
+
       // The specification asks for status 405 when the request uses an unsupported method. RFC
       // 9110 requires the `Allow` header with this status.
       case req @ _ -> GraphQLPath() =>
@@ -195,8 +214,8 @@ object Routes {
           negotiated(req): t =>
             t.errorResponse[F](
               MethodNotAllowed,
-              s"The method ${req.method.name} is not allowed. Use GET or POST."
-            ).putHeaders(Allow(Method.GET, Method.POST)).pure[F]
+              s"The method ${req.method.name} is not allowed. Use GET, POST or QUERY."
+            ).putHeaders(allowed).pure[F]
 
     }
   }
@@ -264,14 +283,31 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       "Subscription operations are not supported over HTTP. Use the WebSocket transport."
     )
 
-  // Returns a 405 Method Not Allowed response with a well-formed GraphQL JSON error body. The
-  // specification does not permit a mutation on a GET request. RFC 9110 requires the `Allow`
-  // header with this status.
-  private def mutationRejection: F[Response[F]] =
+  // 405 for mutation on GET
+  private def getMutationRejection: F[Response[F]] =
     errorResponse(
       MethodNotAllowed,
       "Mutation operations are not supported on a GET request. Use a POST request."
     ).map(_.putHeaders(Allow(Method.POST)))
+
+  // 422 for mutation on QUERY
+  private def queryMutationRejection: F[Response[F]] =
+    errorResponse(
+      UnprocessableContent,
+      "Mutation operations are not supported on a QUERY request. Use a POST request."
+    )
+
+  // If a rejection is given and the parsed operation is a mutation, return the rejection.
+  // Otherwise invoke `proceed`. Both Success and Warning carry an Operation value.
+  private def rejectMutation(
+    parsed:    Result[Operation],
+    rejection: Option[F[Response[F]]]
+  )(proceed: => F[Response[F]]): F[Response[F]] =
+    (parsed, rejection) match {
+      case (Result.Success(op), Some(r)) if service.isMutation(op)    => r
+      case (Result.Warning(_, op), Some(r)) if service.isMutation(op) => r
+      case _                                                           => proceed
+    }
 
   // The specification treats an error that execution raises as a field error. The response to a
   // field error must have a `data` entry and a 2xx status. A bare failure carries no value, so
@@ -319,30 +355,36 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       (vars, exts) =>
         joinRemote(exts)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
           rejectSubscription(parsed) {
-            parsed match {
-              // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
-              case Result.Success(operation)    if service.isMutation(operation) => mutationRejection
-              case Result.Warning(_, operation) if service.isMutation(operation) => mutationRejection
+            // Per the GraphQL over HTTP spec, GET requests MUST NOT execute mutations.
+            rejectMutation(parsed, getMutationRejection.some) {
               // Re-parent server spans on the remote context in `extensions`, as POST does.
-              case _ => execute(parsed, query)(p => joinRemote(exts)(service.query(context, p, query, op)))
+              execute(parsed, query)(p => joinRemote(exts)(service.query(context, p, query, op)))
             }
           }
     )
 
   def oneOffPost(req: Request[F]): F[Response[F]] =
+    withJsonBody(req, Headers.empty)(postBody(_, none))
+
+  // A QUERY request has the same body as a POST request. A 415 response carries the
+  // `Accept-Query` header, which tells the client the media type of a QUERY body.
+  def oneOffQuery(req: Request[F]): F[Response[F]] =
+    withJsonBody(req, Headers(`Accept-Query`(ResponseMediaType.Json)))(postBody(_, queryMutationRejection.some))
+
+  private def withJsonBody(req: Request[F], unsupportedHeaders: Headers)(use: Json => F[Response[F]]): F[Response[F]] =
     // The specification requires support for `application/json` request bodies, and recommends
     // status 415 for any other media type and for an absent header.
     req.headers.get[`Content-Type`].map(_.mediaType) match {
-      case Some(mt) if ResponseMediaType.Json.satisfiedBy(mt) => post(req)
-      case Some(mt) => errorResponse(UnsupportedMediaType, s"Unsupported content type '$mt'. Use '${ResponseMediaType.Json}'.")
-      case None     => errorResponse(UnsupportedMediaType, s"A Content-Type header of '${ResponseMediaType.Json}' is required.")
+      case Some(mt) if ResponseMediaType.Json.satisfiedBy(mt) => decodeJson(req)(use)
+      case Some(mt) => errorResponse(UnsupportedMediaType, s"Unsupported content type '${mt.show}'. Use '${ResponseMediaType.Json.show}'.").map(_.putHeaders(unsupportedHeaders))
+      case None     => errorResponse(UnsupportedMediaType, s"A Content-Type header of '${ResponseMediaType.Json.show}' is required.").map(_.putHeaders(unsupportedHeaders))
     }
 
-  private def post(req: Request[F]): F[Response[F]] =
+  private def decodeJson(req: Request[F])(use: Json => F[Response[F]]): F[Response[F]] =
     req.attemptAs[Json].value.flatMap {
       // The specification asks for status 400 when the JSON body of the request does not parse.
       case Left(failure) => errorResponse(BadRequest, failure.message)
-      case Right(body)   => postBody(body)
+      case Right(body)   => use(body)
     }
 
   // Reads an optional request parameter of the body. The specification gives a type to each
@@ -358,7 +400,9 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       case Some(json) => read(json).map(_.some).toRight(NonEmptyList.one(s"The `$name` entry must be $tpe."))
     }
 
-  private def postBody(body: Json): F[Response[F]] = {
+  // Executes the request in a POST or QUERY body. A QUERY request gives a rejection for a
+  // mutation, and a POST request gives none.
+  private def postBody(body: Json, mutationRejection: Option[F[Response[F]]]): F[Response[F]] = {
 
     // A body that is not a JSON object, or that has no `query` entry of type string, is not a
     // well-formed GraphQL-over-HTTP request. The specification asks for status 422.
@@ -376,7 +420,9 @@ class HttpRouteHandler[F[_]: {Temporal, Tracer}](
       (query, op, vars, ext) =>
         joinRemote(ext)(service.parse(context, query, op, vars, level)).flatMap: parsed =>
           rejectSubscription(parsed) {
-            execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
+            rejectMutation(parsed, mutationRejection) {
+              execute(parsed, query)(p => joinRemote(ext)(service.query(context, p, query, op)))
+            }
           }
     )
   }

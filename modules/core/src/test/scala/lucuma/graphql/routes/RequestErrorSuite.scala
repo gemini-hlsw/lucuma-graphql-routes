@@ -47,7 +47,13 @@ class RequestErrorSuite extends BaseSuite:
       .map: (status, headers, body) =>
         assertEquals(status, Status.MethodNotAllowed)
         assertErrorBody(headers, body)
-        assertEquals(headers.get[Allow], Allow(Method.GET, Method.POST).some)
+        assertEquals(headers.get[Allow], Allow(Method.GET, Method.POST, Method.QUERY, Method.OPTIONS).some)
+
+  test("OPTIONS returns 204 with an Allow header and no body"):
+    rawResponse(uri => Request[IO](Method.OPTIONS, uri)).map: (status, headers, body) =>
+      assertEquals(status, Status.NoContent)
+      assertEquals(headers.get[Allow], Allow(Method.GET, Method.POST, Method.QUERY, Method.OPTIONS).some)
+      assertEquals(body, "")
 
   // --- the Content-Type header of a POST ------------------------------------------
 
@@ -59,15 +65,22 @@ class RequestErrorSuite extends BaseSuite:
     postWithContentType("application/json; charset=utf-8".some).map: (status, _, _) =>
       assertEquals(status, Status.Ok)
 
+  // The message of an error response body. The media types in a message must appear as they
+  // appear in a header, for example `application/json`.
+  private def messagesOf(body: Json): List[String] =
+    errorsOf(body).flatMap(_.hcursor.downField("message").as[String].toOption)
+
   test("POST without a Content-Type header returns 415"):
-    postWithContentType(none).map: (status, _, _) =>
+    postWithContentType(none).map: (status, _, body) =>
       assertEquals(status, Status.UnsupportedMediaType)
+      assertEquals(messagesOf(body), List("A Content-Type header of 'application/json' is required."))
 
   // A body with an unsupported media type must not reach the GraphQL service.
   test("POST with an unsupported Content-Type returns 415 with an errors body"):
     postWithContentType("text/plain".some).map: (status, headers, body) =>
       assertEquals(status, Status.UnsupportedMediaType)
       assertErrorBody(headers, body)
+      assertEquals(messagesOf(body), List("Unsupported content type 'text/plain'. Use 'application/json'."))
 
   // --- the body of a POST ---------------------------------------------------------
 

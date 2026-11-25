@@ -42,9 +42,9 @@ Put the user in the env of the `RequestContext` that the authenticator returns. 
 
 The resulting `HttpRoutes` will serve the following endpoints:
 
-- `Root / "graphql"` using the [Serving over HTTP](https://graphql.org/learn/serving-over-http/) specification.
-- `Root / "ws"` using the [GraphQL over WebSocket Protocol](https://github.com/apollographql/subscriptions-transport-ws/blob/master/PROTOCOL.md) specification.
-- `Root / "playground.html"` serving the [GraphQL Playground](https://github.com/graphql/graphql-playground) HTML application.
+- `Root / "graphql"` using the [Serving over HTTP](https://http-spec.graphql.org/draft/) specification.
+- `Root / "ws"` using the [GraphQL over WebSocket Protocol](https://github.com/enisdenjo/graphql-ws/blob/HEAD/PROTOCOL.md) specification.
+- `Root / "playground.html"` serving the [GraphiQL](https://github.com/graphql/graphiql) HTML application.
 
 The `"graphql"`, `"ws"`, and `"playground.html"` segments are defaults. To use different values, set the fields of `RoutesConfig`.
 
