@@ -97,7 +97,7 @@ class SharedPathSuite extends BaseSuite:
   test("an unsupported method gets status 405"):
     rawResponse(uri => Request[IO](Method.PUT, uri)).map: (status, headers, _) =>
       assertEquals(status, Status.MethodNotAllowed)
-      assertEquals(headers.get[Allow].map(_.methods), Set(Method.GET, Method.POST).some)
+      assertEquals(headers.get[Allow].map(_.methods), Set(Method.GET, Method.POST, Method.QUERY, Method.OPTIONS).some)
 
   test("a WebSocket handshake opens a connection"):
     rawWsFrames(1)(WSFrame.Text("""{"type":"connection_init"}""")).map: frames =>
